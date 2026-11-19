@@ -1,0 +1,202 @@
+{
+	"geode": "5.11.2",
+	"gd": {
+		"win": "2.2081",
+		"android": "2.2081",
+		"mac": "2.2081",
+		"ios": "2.2081"
+	},
+	"id": "patasma.video_importer",
+	"name": "Video Importer",
+	"version": "v0.1.0-beta",
+	"developer": "Patasma",
+	"description": "Convierte video (MP4/MOV/GIF/carpeta de imagenes) en animacion de Geometry Dash a 12 o 30 fps con 8 metodos: cinta de camara, mosaico vivo, mosaico+detalle, epocas de parches, panoramica, fundido cruzado, pulsos y director automatico. Hasta 400-500 mil objetos sin lag. BETA.",
+	"resources": {
+		"spritesheets": {
+			"VideoBtn": [
+				"res/gdVideoBtn.png"
+			]
+		}
+	},
+	"settings": {
+		"t-video": {
+			"name": "Video",
+			"type": "title"
+		},
+		"start-sec": {
+			"type": "float",
+			"default": 0.0,
+			"min": 0.0,
+			"max": 36000.0,
+			"name": "Empezar en (s)",
+			"description": "Segundo del video en el que empieza la conversion. La <cy>Duracion a convertir</c> de la ventana se cuenta desde aqui."
+		},
+		"max-raster": {
+			"type": "int",
+			"default": 384,
+			"min": 96,
+			"max": 768,
+			"name": "Resolucion de trabajo (lado largo, px)",
+			"description": "Tamano al que se reduce cada frame para analizarlo y pintarlo. 384 es un buen equilibrio; mas = mas nitidez pero mas tiempo de calculo."
+		},
+		"quality": {
+			"type": "string",
+			"default": "Normal",
+			"name": "Calidad de calculo",
+			"one-of": [
+				"Rapido",
+				"Normal",
+				"Alto",
+				"Maximo"
+			],
+			"description": "<cy>Alto/Maximo</c>: umbrales de error mas estrictos y, con pocos objetos por frame, rectangulos girados (mas lento)."
+		},
+		"threads": {
+			"type": "int",
+			"default": 4,
+			"min": 1,
+			"max": 8,
+			"name": "Hilos de calculo",
+			"description": "Frames que se pintan a la vez. Bajalo en moviles lentos."
+		},
+		"sequence-fps": {
+			"type": "float",
+			"default": 30.0,
+			"min": 1.0,
+			"max": 240.0,
+			"name": "fps de una carpeta de imagenes",
+			"description": "Si eliges una carpeta de PNG/JPG, a que velocidad se reproducia esa secuencia."
+		},
+		"ffmpeg-path": {
+			"type": "string",
+			"default": "",
+			"name": "Ruta de ffmpeg (opcional)",
+			"description": "Solo escritorio. Vacio = se busca <cy>ffmpeg</c> en el PATH y en las rutas habituales. En Windows el MP4 se lee con Media Foundation y ffmpeg es solo un respaldo."
+		},
+		"t-anim": {
+			"name": "Animacion",
+			"type": "title"
+		},
+		"smooth-colors": {
+			"type": "bool",
+			"default": true,
+			"name": "Fundir colores entre frames",
+			"description": "Metodo 2/3 (mosaico): los Color triggers funden el color durante todo el intervalo del frame (movimiento mas suave, sobre todo a 12 fps). Apagado: cambio instantaneo."
+		},
+		"reassert": {
+			"type": "bool",
+			"default": true,
+			"name": "Relanzar cada paso (autocorreccion)",
+			"description": "Cada paso se lanza dos veces con unos milisegundos de diferencia. Cuesta 1 trigger por frame y evita saltos si el juego pierde un tick por lag."
+		},
+		"crossfade-step": {
+			"type": "int",
+			"default": 0,
+			"min": 0,
+			"max": 8,
+			"name": "Fundido cruzado: frames entre keyframes",
+			"description": "0 = automatico (30 fps: 3, 12 fps: 1). Mas = menos objetos y mas ghosting en movimiento rapido."
+		},
+		"mosaic-max-cells": {
+			"type": "int",
+			"default": 960,
+			"min": 48,
+			"max": 990,
+			"name": "Mosaico: teselas maximas",
+			"description": "Cada tesela usa un canal de color (GD tiene 999). Se reutilizan entre escenas."
+		},
+		"pulse-max-cells": {
+			"type": "int",
+			"default": 3000,
+			"min": 200,
+			"max": 8000,
+			"name": "Mosaico de pulsos: teselas maximas",
+			"description": "Cada tesela es un grupo (GD tiene 9999). Experimental."
+		},
+		"palette-colors": {
+			"type": "int",
+			"default": 96,
+			"min": 8,
+			"max": 400,
+			"name": "Colores de la paleta (modo canales)",
+			"description": "Con el check <cy>Canales (sin HSV)</c> los parches de detalle usan una paleta de este tamano."
+		},
+		"t-level": {
+			"name": "Nivel y colocacion",
+			"type": "title"
+		},
+		"editor-limit": {
+			"type": "int",
+			"default": 500000,
+			"min": 50000,
+			"max": 2000000,
+			"name": "Limite de objetos del editor",
+			"description": "Objetos que admite tu editor. El GD original admite <cy>200000</c>: si pasas de eso se pierden objetos. Para 400-500 mil necesitas que tu GD lo permita (otro mod que lo amplie). La colocacion se detiene antes de pasarte."
+		},
+		"origin-mode": {
+			"type": "string",
+			"default": "Arriba del nivel",
+			"name": "Donde colocar el video",
+			"one-of": [
+				"Arriba del nivel",
+				"En la vista del editor"
+			],
+			"description": "<cy>Arriba</c>: la cinta queda en la altura del ajuste de abajo (el jugador nunca la toca). <cy>En la vista</c>: centrada donde miras ahora."
+		},
+		"origin-y": {
+			"type": "int",
+			"default": 2400,
+			"min": 300,
+			"max": 30000,
+			"name": "Altura de la cinta (u)",
+			"description": "Solo con 'Arriba del nivel'. Y de la esquina inferior de la zona del video."
+		},
+		"triggers-at-start": {
+			"type": "bool",
+			"default": true,
+			"name": "Arrancar al inicio del nivel",
+			"description": "El trigger de arranque va en x=-30 (empieza al comenzar). Si lo desactivas, arranca cuando el jugador llega al borde izquierdo de la cinta."
+		},
+		"first-group": {
+			"type": "int",
+			"default": 0,
+			"min": 0,
+			"max": 9000,
+			"name": "Primer grupo (0 = automatico)",
+			"description": "0 = por encima del grupo mas alto del nivel."
+		},
+		"color-channel": {
+			"type": "int",
+			"default": 1010,
+			"min": 1,
+			"max": 1012,
+			"name": "Canal de color base (HSV)",
+			"description": "Canal sobre el que se aplica el HSV de cada objeto. 1010 = negro."
+		},
+		"bleed": {
+			"type": "float",
+			"default": 0.15,
+			"min": 0.0,
+			"max": 2.0,
+			"name": "Solape entre rectangulos",
+			"description": "Unidades extra que se ensancha cada rectangulo para evitar lineas finas entre ellos."
+		},
+		"flip-rotation": {
+			"type": "bool",
+			"default": false,
+			"name": "Invertir rotaciones",
+			"description": "Si los rectangulos girados salen espejados."
+		},
+		"select-after": {
+			"type": "bool",
+			"default": true,
+			"name": "Seleccionar al colocar",
+			"description": "Solo si son pocos objetos (<= 8000). Con mas se ignora."
+		}
+	},
+	"tags": [
+		"editor",
+		"offline",
+		"utility"
+	]
+}
