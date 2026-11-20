@@ -8,7 +8,7 @@
 	},
 	"id": "patasma.video_importer",
 	"name": "Video Importer",
-	"version": "v0.1.0-beta",
+	"version": "v0.1.1-beta",
 	"developer": "Patasma",
 	"description": "Convierte video (MP4/MOV/GIF/carpeta de imagenes) en animacion de Geometry Dash a 12 o 30 fps con 8 metodos: cinta de camara, mosaico vivo, mosaico+detalle, epocas de parches, panoramica, fundido cruzado, pulsos y director automatico. Hasta 400-500 mil objetos sin lag. BETA.",
 	"resources": {

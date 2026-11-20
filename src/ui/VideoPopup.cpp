@@ -584,17 +584,24 @@ int VideoPopup::maxUsedGroup() const {
 }
 
 // canales de color 2..999 que el nivel todavia no usa (los mosaicos los reutilizan escena a escena)
+// Los `requires` van dentro de lambdas genericas (contexto de plantilla): si un campo no existe en esta version de los bindings,
+// la rama se descarta en vez de dar error de compilacion.
 std::vector<int> VideoPopup::freeChannels() const {
     std::set<int> used;
     auto lel = LevelEditorLayer::get();
+    auto addObj = [&](auto* o) {
+        if constexpr (requires { o->m_baseColor->m_colorID; }) { if (o->m_baseColor) used.insert(int(o->m_baseColor->m_colorID)); }
+        if constexpr (requires { o->m_detailColor->m_colorID; }) { if (o->m_detailColor) used.insert(int(o->m_detailColor->m_colorID)); }
+    };
+    auto addEffect = [&](auto* e) {
+        if constexpr (requires { e->m_targetColor; }) used.insert(int(e->m_targetColor));
+        if constexpr (requires { e->m_targetColorID; }) used.insert(int(e->m_targetColorID));
+    };
     if (lel && lel->m_objects) {
         for (auto* obj : CCArrayExt<GameObject*>(lel->m_objects)) {
             if (!obj) continue;
-            if constexpr (requires { obj->m_baseColor->m_colorID; }) { if (obj->m_baseColor) used.insert(int(obj->m_baseColor->m_colorID)); }
-            if constexpr (requires { obj->m_detailColor->m_colorID; }) { if (obj->m_detailColor) used.insert(int(obj->m_detailColor->m_colorID)); }
-            if (auto* eff = typeinfo_cast<EffectGameObject*>(obj)) {
-                if constexpr (requires { eff->m_targetColorID; }) used.insert(int(eff->m_targetColorID));
-            }
+            addObj(obj);
+            if (auto* eff = typeinfo_cast<EffectGameObject*>(obj)) addEffect(eff);
         }
     }
     std::vector<int> v;

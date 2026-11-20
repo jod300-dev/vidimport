@@ -6,3 +6,6 @@
 - Checks 12 fps / 30 fps, presupuesto total de objetos (hasta 500.000), duracion, escala de grises y colores en canales.
 - Lectura de MP4/MOV/MKV (Media Foundation en Windows; ffmpeg en escritorio), GIF y carpeta de imagenes.
 - Patron de prueba para verificar los triggers en tu version de GD.
+
+## v0.1.1-beta
+- Arreglo de compilacion en Windows: `requires` sobre campos inexistentes de EffectGameObject (m_targetColorID) fuera de contexto de plantilla.
