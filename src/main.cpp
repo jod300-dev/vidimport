@@ -4,7 +4,7 @@
 
 using namespace geode::prelude;
 
-// Boton en la barra "Edit" del editor que abre el importador de video (mismo enganche que Image Exporter / GIF Importer).
+// Boton en la barra "Edit" del editor que abre el importador de video (mismo enganche que GIF Importer / Image Exporter).
 class $modify(VideoImportEditorUI, EditorUI) {
     void onOpenVideoImporter(CCObject*) {
         VideoPopup::create(this)->show();

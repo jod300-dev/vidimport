@@ -1,11 +1,6 @@
-# Changelog
-
-## v0.1.0-beta
-- Primera version. Reutiliza del GIF Importer / Image Exporter: motor de pintado (BSP, hibrido con rectangulos girados, paleta), exportacion de objetos GD, colocacion por tandas y la estructura de la ventana.
-- 8 metodos de animacion nuevos (cinta de camara, mosaico vivo, mosaico + detalle, epocas de parches, panoramica + residuo, fundido cruzado, mosaico de pulsos, director automatico).
-- Checks 12 fps / 30 fps, presupuesto total de objetos (hasta 500.000), duracion, escala de grises y colores en canales.
-- Lectura de MP4/MOV/MKV (Media Foundation en Windows; ffmpeg en escritorio), GIF y carpeta de imagenes.
-- Patron de prueba para verificar los triggers en tu version de GD.
-
-## v0.1.1-beta
-- Arreglo de compilacion en Windows: `requires` sobre campos inexistentes de EffectGameObject (m_targetColorID) fuera de contexto de plantilla.
+# v1.0.0-beta
+- Primera version. Motor de conversion reciclado de GIF Importer / Image Exporter (BSP, hibrido, quadtree, piramide, regiones, franjas, rotados, cuadricula + exportador de objetos y colocacion por tandas).
+- Decodificacion de MP4/MOV/M4V: Media Foundation (Windows), AMediaCodec (Android), AVFoundation (macOS/iOS) y ffmpeg como respaldo en PC.
+- Muestreo a 12 o 30 fps (frame mas cercano en el tiempo), rotacion de moviles en vertical.
+- Modos de reproduccion Toggle (lista con instantes absolutos) y Spawn (cadena con resincronizacion cada segundo).
+- Presupuesto total de objetos (por defecto 450000): reparto adaptativo, frames repetidos reutilizados, estabilizacion temporal del ruido de compresion.

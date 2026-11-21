@@ -1,23 +1,38 @@
 #include "VideoPopup.hpp"
 
-#include <Geode/ui/GeodeUI.hpp>
-#include <Geode/ui/Notification.hpp>
-#include <Geode/utils/file.hpp>
-#include <Geode/utils/async.hpp>
-#include <chrono>
-#include <set>
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
 #include <thread>
 
-namespace {
-    constexpr float kPopupW = 440.f, kPopupH = 300.f;
-    constexpr float kPrevSize = 140.f;
-    constexpr int kMinBudget = 20000, kMaxBudget = 500000, kBudgetStep = 5000;
-    constexpr int kMinSeconds = 1, kMaxSeconds = 120;
+#include "FitText.hpp"
+#include "Layout.hpp"
 
-    float budgetToSlider(int v) { return float(v - kMinBudget) / float(kMaxBudget - kMinBudget); }
-    int sliderToBudget(float s) { int v = kMinBudget + int(std::lround(s * (kMaxBudget - kMinBudget))); return std::clamp(((v + kBudgetStep / 2) / kBudgetStep) * kBudgetStep, kMinBudget, kMaxBudget); }
-    float secondsToSlider(int v) { return float(v - kMinSeconds) / float(kMaxSeconds - kMinSeconds); }
-    int sliderToSeconds(float s) { return std::clamp(kMinSeconds + int(std::lround(s * (kMaxSeconds - kMinSeconds))), kMinSeconds, kMaxSeconds); }
+namespace wlay = gdx::layout;
+
+namespace {
+    constexpr float kPopupW = wlay::kW, kPopupH = wlay::kH;
+    constexpr float kPrevSize = wlay::kPrevSize;
+    constexpr int kEditorObjectMargin = 3000;                       // colchon para lo que el nivel ya tenga o lo que GD anada
+    constexpr int kMinSize = 150, kMaxSize = 6000;
+    constexpr int kAbsMinTotal = 10000;
+
+    // Metodos que ofrece la ventana (los de "imagen" del motor: el video los aplica frame a frame). El primero es el recomendado.
+    constexpr gdx::Method kMethods[] = {
+        gdx::Method::BSP, gdx::Method::Hybrid, gdx::Method::Quadtree, gdx::Method::Pyramid,
+        gdx::Method::Regions, gdx::Method::Runs, gdx::Method::Geometrize, gdx::Method::UniformGrid,
+    };
+    constexpr int kMethodCount = int(sizeof(kMethods) / sizeof(kMethods[0]));
+    constexpr char const* kMethodDesc[kMethodCount] = {
+        "RECOMENDADO. Cortes optimos en X o Y: rectangulos de cualquier forma. El mas rapido y el mas nitido en video.",
+        "BSP + rectangulos girados donde queda error. Mas lento: para clips cortos con pocos frames y muchos objetos.",
+        "Divide en 4 solo donde hay detalle. Rapido; bloques cuadrados (aspecto pixelado).",
+        "Bloque grande y capas de detalle solo donde el color cambia. Ahorra objetos en fondos lisos.",
+        "Reduce la paleta y fusiona zonas iguales. Para animacion, dibujos y videos con colores planos.",
+        "Tiras de color por filas con tolerancia. Estilo escaneo, muy rapido.",
+        "Solo rectangulos girados (estilo Primitive). Aspecto pictorico; lento.",
+        "Una celda por objeto con el color medio. Ideal para pixel art.",
+    };
 
     int qualityFromSetting() {
         auto q = Mod::get()->getSettingValue<std::string>("quality");
@@ -26,14 +41,65 @@ namespace {
         if (q == "Maximo") return 3;
         return 0;
     }
+    using gdx::fit::fitWrapped;
+    // Avisos: los cortos en un FLAlertLayer; los largos (errores con mucho texto) en una ventana con SCROLL y boton OK siempre visible.
+    void showAlert(char const* title, std::string const& text) {
+        if (text.size() <= 180) FLAlertLayer::create(title, text.c_str(), "OK")->show();
+        else MDPopup::create(title, text, "OK")->show();
+    }
+    std::string baseName(std::string const& p) {
+        size_t i = p.find_last_of("/\\");
+        return i == std::string::npos ? p : p.substr(i + 1);
+    }
+
+    // ---- deslizadores 0..1 <-> valor
+    int totalMin(int maxV) { return std::min(kAbsMinTotal, std::max(1000, maxV / 2)); }
+    float totalToSlider(int v, int maxV) { return std::clamp(float(v - totalMin(maxV)) / float(std::max(1, maxV - totalMin(maxV))), 0.f, 1.f); }
+    int sliderToTotal(float s, int maxV) {
+        const int mn = totalMin(maxV);
+        const double u = mn + double(std::clamp(s, 0.f, 1.f)) * (maxV - mn);
+        const int step = maxV >= 100000 ? 5000 : 500;
+        return std::clamp(int(std::lround(u / step)) * step, mn, maxV);
+    }
+    float sizeToSlider(int u) { return std::clamp(float(std::log(double(u) / kMinSize) / std::log(double(kMaxSize) / kMinSize)), 0.f, 1.f); }
+    int sliderToSize(float v) {
+        double u = kMinSize * std::pow(double(kMaxSize) / kMinSize, std::clamp(v, 0.f, 1.f));
+        int step = u < 600 ? 10 : u < 2000 ? 50 : 100;
+        return std::clamp(int(std::lround(u / step)) * step, kMinSize, kMaxSize);
+    }
+    float rangeToSlider(double v, double lo, double hi) { return hi > lo ? std::clamp(float((v - lo) / (hi - lo)), 0.f, 1.f) : 0.f; }
+    double sliderToRange(float s, double lo, double hi, double step) {
+        const double u = lo + double(std::clamp(s, 0.f, 1.f)) * (hi - lo);
+        return std::clamp(std::round(u / step) * step, lo, std::max(lo, hi));
+    }
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
-// Colocacion por tandas (igual que en el GIF Importer): GD corta la cadena si se pasa el limite del editor y congela si se crean decenas
-// de miles de objetos de golpe, asi que se crean ~1500 por tanda y unas pocas tandas por fotograma (~25 ms). El nodo cuelga del editor:
-// si se sale del editor, la colocacion se cancela sola.
+// Colocacion POR TANDAS. Crear 100k-500k objetos de golpe con createObjectsFromString congela el juego (o lo cierra en moviles) y,
+// si se pasa el limite de objetos del editor, GD corta la cadena y se pierden los ultimos objetos. Aqui la cadena se parte en trozos
+// de ~1500 objetos (cortando siempre en ';') y se crean unos pocos por fotograma (~25 ms), con aviso de progreso.
+// El nodo cuelga del editor: si se sale del editor, la colocacion se cancela sola.
 // ---------------------------------------------------------------------------------------------------------------------
 namespace {
+    std::vector<std::string> splitChain(std::string const& s, size_t perPart) {
+        std::vector<std::string> parts;
+        size_t start = 0, count = 0;
+        for (size_t i = 0; i <= s.size(); ++i) {
+            if (i == s.size() || s[i] == ';') {
+                if (i > start) ++count;
+                if (count >= perPart || i == s.size()) {
+                    if (i > start || !parts.empty()) {
+                        size_t endPos = i;
+                        while (endPos > start && s[endPos - 1] == ';') --endPos;
+                        if (endPos > start) parts.push_back(s.substr(start, endPos - start));
+                    }
+                    start = i + 1; count = 0;
+                }
+            }
+        }
+        return parts;
+    }
+
     class PlaceRunner : public CCNode {
     public:
         std::vector<std::string> parts;
@@ -55,7 +121,7 @@ namespace {
 
         void begin(std::vector<std::string> p, size_t total, bool select, std::string const& msg) {
             parts = std::move(p); totalObjs = total; doneMsg = msg;
-            selectAfter = select && total <= 8000;
+            selectAfter = select && total <= 8000;                    // seleccionar decenas de miles de objetos tambien cuelga el editor
             if (selectAfter) { selected = CCArray::create(); selected->retain(); }
             if (auto scene = CCDirector::sharedDirector()->getRunningScene()) {
                 label = CCLabelBMFont::create("Colocando objetos... 0%", "bigFont.fnt");
@@ -100,63 +166,35 @@ namespace {
             if (label && label->getParent()) label->removeFromParent();
             std::string msg = ok ? doneMsg : std::string("Colocacion cancelada (se salio del editor)");
             bool warn = false;
-            if (ok && placed < expected) {
-                msg += " | AVISO: GD creo " + std::to_string(placed) + " de " + std::to_string(expected) + " objetos";
+            if (ok && placed < expected) {                       // GD no creo todo lo que se le pidio: la animacion saldria con huecos
+                msg += " | AVISO: GD creo " + std::to_string(placed) + " de " + std::to_string(expected) +
+                       " objetos. Tu editor tiene un limite de objetos: instala un mod que lo quite o baja el tope total.";
                 warn = true;
             }
-            Notification::create(msg, ok && !warn ? NotificationIcon::Success : NotificationIcon::Error, warn ? 8.f : 4.f)->show();
+            Notification::create(msg, ok && !warn ? NotificationIcon::Success : NotificationIcon::Error, warn ? 10.f : 4.f)->show();
             this->removeFromParent();
         }
     };
-
-    // Vista previa de UN frame con el metodo elegido (los metodos de mosaico muestran sus teselas).
-    vx::Result previewFor(vx::Clip const& clip, vx::Params const& P) {
-        const int W = clip.w, H = clip.h;
-        const vx::Image& fr = clip.frames[clip.frames.size() / 2];
-        vx::Coder c = P.coder;
-        const int n = clip.count();
-        const int perFrame = std::clamp(P.budget / std::max(1, n), 40, 4000);
-        if (c == vx::Coder::Auto) c = perFrame < 90 ? vx::Coder::Mosaic : (perFrame < 420 ? vx::Coder::MosaicDetail : vx::Coder::Reel);
-        vx::Result r; r.rasterW = W; r.rasterH = H; r.aspect = float(W) / float(std::max(1, H));
-        auto cellsFor = [&](int K) {
-            std::vector<vx::Cell> cells = vx::temporalCells({&fr}, K, 2, nullptr);
-            auto col = vx::cellMeans(fr, cells);
-            for (size_t i = 0; i < cells.size(); ++i) {
-                vx::Shape s; s.cx = (cells[i].x0 + cells[i].x1) * 0.5f; s.cy = (cells[i].y0 + cells[i].y1) * 0.5f;
-                s.w = float(cells[i].x1 - cells[i].x0); s.h = float(cells[i].y1 - cells[i].y0); s.r = col[i][0]; s.g = col[i][1]; s.b = col[i][2];
-                r.shapes.push_back(s);
-            }
-            return cells;
-        };
-        if (c == vx::Coder::Mosaic) { cellsFor(P.mosaicMaxCells); r.note = "Vista previa: teselas del frame central"; }
-        else if (c == vx::Coder::PulseMosaic) { cellsFor(P.pulseMaxCells); r.note = "Vista previa: teselas (pulsos)"; }
-        else if (c == vx::Coder::MosaicDetail) {
-            cellsFor(std::min(P.mosaicMaxCells, 560));
-            vx::Image canvas = vx::blankCanvas(W, H); vx::paintOnto(canvas, r.shapes);
-            auto det = vx::residualShapes(fr, canvas, 15, perFrame, P);
-            for (auto& s : det) { s.z = 1; r.shapes.push_back(s); }
-            r.note = "Vista previa: mosaico + detalle";
-        } else {
-            vx::Result f = vx::paintFull(fr, perFrame, P);
-            r.shapes = std::move(f.shapes); r.psnr = f.psnr;
-            r.note = "Vista previa: frame central (~" + std::to_string(perFrame) + " obj)";
-        }
-        return r;
-    }
 }
+
+// ------------------------------------------------------------------------------------------------------- ventana ----
 
 VideoPopup* VideoPopup::create(EditorUI* editor) {
     auto ret = new VideoPopup();
-    if (ret->init(editor)) { ret->autorelease(); return ret; }
+    if (ret->init(editor)) {
+        ret->autorelease();
+        return ret;
+    }
     delete ret;
     return nullptr;
 }
 
 VideoPopup::~VideoPopup() {
-    if (m_load) m_load->prog.cancel.store(true);
-    if (m_prev) { /* el hilo de vista previa termina solo */ }
-    if (m_build) m_build->prog.cancel.store(true);
+    if (m_job) m_job->prog.cancel.store(true);
+    if (m_build) { m_build->prog.cancel.store(true); m_build->cancelDecode.store(true); }
 }
+
+gdx::Method VideoPopup::method() const { return kMethods[std::clamp(m_method, 0, kMethodCount - 1)]; }
 
 bool VideoPopup::init(EditorUI* editor) {
     if (!Popup::init(kPopupW, kPopupH)) return false;
@@ -164,12 +202,13 @@ bool VideoPopup::init(EditorUI* editor) {
     this->setTitle("Video Importer (beta)");
 
     auto* mod = Mod::get();
-    m_method = std::clamp(mod->getSavedValue<int>("method", int(vx::Coder::Auto)), 0, vx::kCoderCount - 1);
-    m_budget = std::clamp(mod->getSavedValue<int>("budget", 300000), kMinBudget, kMaxBudget);
-    m_seconds = std::clamp(mod->getSavedValue<int>("seconds", 10), kMinSeconds, kMaxSeconds);
-    m_fps30 = mod->getSavedValue<bool>("fps30", true);
+    const int settingMax = std::clamp(int(mod->getSettingValue<int>("max-total-objects")), 5000, 500000);
+    m_method = std::clamp(mod->getSavedValue<int>("method", 0), 0, kMethodCount - 1);
+    m_total = std::clamp(mod->getSavedValue<int>("total", settingMax), totalMin(settingMax), settingMax);
+    m_sizeU = std::clamp(mod->getSavedValue<int>("size-u", 600), kMinSize, kMaxSize);
+    m_fps = mod->getSavedValue<int>("fps", 12) == 30 ? 30 : 12;
+    m_mode = mod->getSavedValue<int>("mode", 0) == 1 ? gdx::PlayMode::Spawn : gdx::PlayMode::Toggle;
     m_gray = mod->getSavedValue<bool>("gray", false);
-    m_chan = mod->getSavedValue<bool>("chan", false);
 
     auto put = [&](CCNode* n, float x, float y) { m_mainLayer->addChildAtPosition(n, Anchor::TopLeft, ccp(x, -y)); };
     auto putBtn = [&](CCNode* n, float x, float y) { m_buttonMenu->addChildAtPosition(n, Anchor::TopLeft, ccp(x, -y)); };
@@ -186,18 +225,18 @@ bool VideoPopup::init(EditorUI* editor) {
     m_previewHolder->setContentSize({kPrevSize, kPrevSize});
     m_previewHolder->setAnchorPoint({0.5f, 0.5f});
     m_previewHolder->addChild(CCLayerColor::create(ccc4(0, 0, 0, 120), kPrevSize, kPrevSize));
-    auto hint = CCLabelBMFont::create("Elige un video", "chatFont.fnt");
+    auto hint = CCLabelBMFont::create("Elige un MP4", "chatFont.fnt");
     hint->setOpacity(120);
     hint->setPosition({kPrevSize / 2, kPrevSize / 2});
     m_previewHolder->addChild(hint);
-    put(m_previewHolder, 84.f, 112.f);
+    put(m_previewHolder, wlay::kLeftCx, wlay::kPrevCy);
 
-    m_statA = label("MP4, MOV, MKV, GIF o carpeta", "chatFont.fnt", 0.8f, 84.f, 194.f);
-    m_statB = label("", "chatFont.fnt", 0.75f, 84.f, 207.f);
-    m_noteLabel = CCLabelBMFont::create("", "chatFont.fnt", 150.f, kCCTextAlignmentCenter);
+    m_statA = label("Elige un video MP4", "chatFont.fnt", 0.85f, wlay::kLeftCx, wlay::kStatACy);
+    m_statB = label("", "chatFont.fnt", 0.75f, wlay::kLeftCx, wlay::kStatBCy);
+    m_noteLabel = CCLabelBMFont::create("", "chatFont.fnt", wlay::kNoteMaxW, kCCTextAlignmentCenter);
     m_noteLabel->setScale(0.6f);
     m_noteLabel->setColor({255, 200, 80});
-    put(m_noteLabel, 84.f, 238.f);
+    put(m_noteLabel, wlay::kLeftCx, wlay::kNoteCy);
 
     // ============ derecha ============
     auto arrow = [&](bool flip, SEL_MenuHandler cb, float x, float y) {
@@ -206,56 +245,72 @@ bool VideoPopup::init(EditorUI* editor) {
         spr->setFlipX(flip);
         putBtn(CCMenuItemSpriteExtra::create(spr, this, cb), x, y);
     };
-    arrow(false, menu_selector(VideoPopup::onPrev), 178.f, 52.f);
-    arrow(true,  menu_selector(VideoPopup::onNext), 416.f, 52.f);
-    m_methodLabel = label("", "bigFont.fnt", 0.5f, 297.f, 52.f);
-    m_descLabel = CCLabelBMFont::create("", "chatFont.fnt", 390.f, kCCTextAlignmentCenter);
-    m_descLabel->setScale(0.62f);
-    put(m_descLabel, 297.f, 84.f);
+    arrow(false, menu_selector(VideoPopup::onPrev), wlay::kArrowCxL, wlay::kArrowCy);
+    arrow(true,  menu_selector(VideoPopup::onNext), wlay::kArrowCxR, wlay::kArrowCy);
+    m_methodLabel = label("", "bigFont.fnt", 0.5f, wlay::kRightCx, wlay::kArrowCy);
+    m_descLabel = CCLabelBMFont::create("", "chatFont.fnt", wlay::kDescMaxW, kCCTextAlignmentCenter);
+    m_descLabel->setScale(0.55f);
+    put(m_descLabel, wlay::kRightCx, wlay::kDescCy);
 
-    label("Presupuesto de objetos", "bigFont.fnt", 0.32f, 170.f, 122.f, 0.f);
-    m_budgetValue = label("", "bigFont.fnt", 0.32f, 424.f, 122.f, 1.f);
-    m_budgetSlider = Slider::create(this, menu_selector(VideoPopup::onBudgetSlider), 0.78f);
-    m_budgetSlider->setValue(budgetToSlider(m_budget));
-    put(m_budgetSlider, 297.f, 138.f);
+    static char const* kSliderNames[4] = {"Objetos totales", "Lado largo", "Inicio", "Duracion"};
+    Slider** sliders[4] = {&m_totalSlider, &m_sizeSlider, &m_startSlider, &m_lenSlider};
+    SEL_MenuHandler cbs[4] = {menu_selector(VideoPopup::onTotalSlider), menu_selector(VideoPopup::onSizeSlider),
+                              menu_selector(VideoPopup::onStartSlider), menu_selector(VideoPopup::onLenSlider)};
+    for (int i = 0; i < 4; ++i) {
+        const float y = wlay::kSliderLabelY[i];
+        label(kSliderNames[i], "bigFont.fnt", 0.32f, wlay::kRightL, y, 0.f);
+        m_val[i] = label("", "bigFont.fnt", 0.32f, wlay::kRightR, y, 1.f);
+        *sliders[i] = Slider::create(this, cbs[i], 0.78f);
+        put(*sliders[i], wlay::kRightCx, y + wlay::kSliderOffset);
+    }
+    m_totalSlider->setValue(totalToSlider(m_total, settingMax));
+    m_sizeSlider->setValue(sizeToSlider(m_sizeU));
+    m_startSlider->setValue(0.f);
+    m_lenSlider->setValue(1.f);
 
-    label("Duracion a convertir", "bigFont.fnt", 0.32f, 170.f, 160.f, 0.f);
-    m_secondsValue = label("", "bigFont.fnt", 0.32f, 424.f, 160.f, 1.f);
-    m_secondsSlider = Slider::create(this, menu_selector(VideoPopup::onSecondsSlider), 0.78f);
-    m_secondsSlider->setValue(secondsToSlider(m_seconds));
-    put(m_secondsSlider, 297.f, 176.f);
+    // checks (fila A: fps y grises; fila B: modo de reproduccion). 12/30 y Toggle/Spawn son excluyentes (ver syncChecks)
+    auto chk = [&](SEL_MenuHandler cb, bool on, float x, float y) {
+        auto c = CCMenuItemToggler::createWithStandardSprites(this, cb, wlay::kChkSize);
+        c->toggle(on);
+        putBtn(c, x, y);
+        return c;
+    };
+    auto chkLabel = [&](char const* text, float x, float y, float maxW) {
+        auto l = label(text, "bigFont.fnt", 0.28f, x, y, 0.f);
+        l->limitLabelWidth(maxW, 0.28f, 0.15f);
+    };
+    m_chk12 = chk(menu_selector(VideoPopup::onFps12), m_fps == 12, 174.f, wlay::kChkRowA);
+    chkLabel("12 fps", 186.f, wlay::kChkRowA, 44.f);
+    m_chk30 = chk(menu_selector(VideoPopup::onFps30), m_fps == 30, 238.f, wlay::kChkRowA);
+    chkLabel("30 fps", 250.f, wlay::kChkRowA, 44.f);
+    m_chkGray = chk(menu_selector(VideoPopup::onGray), m_gray, 304.f, wlay::kChkRowA);
+    chkLabel("Escala de grises", 316.f, wlay::kChkRowA, 100.f);
+    m_chkToggle = chk(menu_selector(VideoPopup::onModeToggle), m_mode == gdx::PlayMode::Toggle, 174.f, wlay::kChkRowB);
+    chkLabel("Toggle (exacto)", 186.f, wlay::kChkRowB, 104.f);
+    m_chkSpawn = chk(menu_selector(VideoPopup::onModeSpawn), m_mode == gdx::PlayMode::Spawn, 300.f, wlay::kChkRowB);
+    chkLabel("Spawn (ligero)", 312.f, wlay::kChkRowB, 100.f);
 
-    // dos checks de fps (excluyentes): el video se procesa a la tasa marcada
-    m_chk12 = CCMenuItemToggler::createWithStandardSprites(this, menu_selector(VideoPopup::on12), 0.5f);
-    m_chk12->toggle(!m_fps30);
-    putBtn(m_chk12, 180.f, 202.f);
-    label("12 fps (barato)", "bigFont.fnt", 0.28f, 192.f, 202.f, 0.f);
-    m_chk30 = CCMenuItemToggler::createWithStandardSprites(this, menu_selector(VideoPopup::on30), 0.5f);
-    m_chk30->toggle(m_fps30);
-    putBtn(m_chk30, 312.f, 202.f);
-    label("30 fps (fluido)", "bigFont.fnt", 0.28f, 324.f, 202.f, 0.f);
+    // ---- fila de botones: UNA sola fila (misma Y, misma altura, misma escala de texto)
+    auto mkBtn = [&](char const* text, char const* frame, SEL_MenuHandler cb) {
+        return CCMenuItemSpriteExtra::create(ButtonSprite::create(text, "bigFont.fnt", frame, wlay::kBtnTextScale), this, cb);
+    };
+    auto putLeft = [&](CCMenuItemSpriteExtra* b, float left) {
+        const float w = b->getContentSize().width;
+        putBtn(b, wlay::centerFromLeft(left, w), wlay::kBtnRowY);
+        return left + w;
+    };
+    auto putRight = [&](CCMenuItemSpriteExtra* b, float right) {
+        const float w = b->getContentSize().width;
+        putBtn(b, wlay::centerFromRight(right, w), wlay::kBtnRowY);
+        return right - w;
+    };
+    putLeft(mkBtn("Ajustes", "GJ_button_04.png", menu_selector(VideoPopup::onSettings)), wlay::kLeftL);
+    auto pickBtn = mkBtn("Video", "GJ_button_01.png", menu_selector(VideoPopup::onPick));
+    auto placeBtn = mkBtn("Colocar", "GJ_button_02.png", menu_selector(VideoPopup::onPlace));
+    putRight(pickBtn, putRight(placeBtn, wlay::kRightR) - wlay::kBtnGap);
 
-    m_chkGray = CCMenuItemToggler::createWithStandardSprites(this, menu_selector(VideoPopup::onGray), 0.5f);
-    m_chkGray->toggle(m_gray);
-    putBtn(m_chkGray, 180.f, 226.f);
-    label("Escala de grises", "bigFont.fnt", 0.28f, 192.f, 226.f, 0.f);
-    m_chkChan = CCMenuItemToggler::createWithStandardSprites(this, menu_selector(VideoPopup::onChan), 0.5f);
-    m_chkChan->toggle(m_chan);
-    putBtn(m_chkChan, 312.f, 226.f);
-    if (auto* l = label("Canales (sin HSV)", "bigFont.fnt", 0.28f, 324.f, 226.f, 0.f)) l->limitLabelWidth(106.f, 0.28f, 0.15f);
-
-    auto pickBtn = CCMenuItemSpriteExtra::create(ButtonSprite::create("Video", "bigFont.fnt", "GJ_button_01.png", 0.6f), this, menu_selector(VideoPopup::onPick));
-    putBtn(pickBtn, 212.f, 268.f);
-    auto dirBtn = CCMenuItemSpriteExtra::create(ButtonSprite::create("Carpeta", "bigFont.fnt", "GJ_button_04.png", 0.5f), this, menu_selector(VideoPopup::onPickFolder));
-    putBtn(dirBtn, 280.f, 268.f);
-    auto placeBtn = CCMenuItemSpriteExtra::create(ButtonSprite::create("Colocar", "bigFont.fnt", "GJ_button_02.png", 0.6f), this, menu_selector(VideoPopup::onPlace));
-    putBtn(placeBtn, 358.f, 268.f);
     auto infoBtn = CCMenuItemSpriteExtra::create(CCSprite::createWithSpriteFrameName("GJ_infoIcon_001.png"), this, menu_selector(VideoPopup::onInfo));
-    putBtn(infoBtn, 418.f, 268.f);
-    auto setBtn = CCMenuItemSpriteExtra::create(ButtonSprite::create("Ajustes", "bigFont.fnt", "GJ_button_04.png", 0.4f), this, menu_selector(VideoPopup::onSettings));
-    putBtn(setBtn, 40.f, 270.f);
-    auto testBtn = CCMenuItemSpriteExtra::create(ButtonSprite::create("Prueba", "bigFont.fnt", "GJ_button_04.png", 0.4f), this, menu_selector(VideoPopup::onTest));
-    putBtn(testBtn, 112.f, 270.f);
+    putBtn(infoBtn, wlay::kInfoCx, wlay::kInfoCy);
 
     this->schedule(schedule_selector(VideoPopup::tick), 0.1f);
     this->refreshLabels();
@@ -264,283 +319,401 @@ bool VideoPopup::init(EditorUI* editor) {
 
 // ------------------------------------------------------------- etiquetas ---
 
+int VideoPopup::framesNow() const { return m_haveVideo ? vid::framesFor(m_length, m_fps) : 0; }
+
+int VideoPopup::editorRoom() const {
+    auto lel = LevelEditorLayer::get();
+    const int cur = (lel && lel->m_objects) ? int(lel->m_objects->count()) : 0;
+    const int lim = std::clamp(int(Mod::get()->getSettingValue<int>("editor-object-limit")), 50000, 1000000);
+    return std::max(0, lim - kEditorObjectMargin - cur);
+}
+
+int VideoPopup::maxTotal() const { return std::clamp(std::min(m_total, editorRoom()), 500, 500000); }
+
+double VideoPopup::maxLengthFit() const {
+    const int minPer = std::clamp(int(Mod::get()->getSettingValue<int>("min-per-frame")), 30, 3000);
+    const int fit = std::max(1, (maxTotal() - 16) / (minPer + 6));        // 6 = cota de triggers por frame
+    return double(fit) / double(m_fps);
+}
+
+int VideoPopup::perFrameEstimate() const {
+    const int n = std::max(1, framesNow());
+    return std::max(0, int((long(maxTotal()) - gdx::videoTriggerBound(n, n)) / n));
+}
+
+int VideoPopup::storeLong(int frames) const {
+    const int cap = std::clamp(int(Mod::get()->getSettingValue<int>("max-raster")), 160, 1024);
+    if (!m_haveVideo || frames <= 0) return cap;
+    const double a = std::max(1e-3, double(m_info.displayW) / std::max(1, m_info.displayH));
+    const double budgetBytes = 600.0 * 1024 * 1024;                       // memoria maxima de los frames decodificados
+    const double L = std::sqrt(budgetBytes / (double(frames) * 4.0) * std::max(a, 1.0 / a));
+    return std::clamp(int(std::min<double>(cap, L)), 160, cap);
+}
+
+void VideoPopup::clampClip() {
+    if (!m_haveVideo) return;
+    const double dur = m_info.duration;
+    m_start = std::clamp(m_start, 0.0, std::max(0.0, dur - 0.5));
+    double maxLen = std::min(dur - m_start, maxLengthFit());
+    const double minLen = std::min(0.5, std::max(0.1, maxLen));
+    maxLen = std::max(maxLen, minLen);
+    m_length = std::clamp(std::floor(m_length * 20.0 + 1e-6) / 20.0, minLen, maxLen);
+}
+
+void VideoPopup::syncSliders() {
+    auto* mod = Mod::get();
+    const int settingMax = std::clamp(int(mod->getSettingValue<int>("max-total-objects")), 5000, 500000);
+    m_totalSlider->setValue(totalToSlider(m_total, settingMax));
+    if (!m_haveVideo) return;
+    const double dur = m_info.duration;
+    m_startSlider->setValue(rangeToSlider(m_start, 0.0, std::max(0.1, dur - 0.5)));
+    const double maxLen = std::max(0.5, std::min(dur - m_start, maxLengthFit()));
+    m_lenSlider->setValue(rangeToSlider(m_length, std::min(0.5, maxLen), maxLen));
+}
+
 void VideoPopup::refreshLabels() {
-    auto const& info = vx::coderInfo(vx::Coder(m_method));
+    auto const& info = gdx::methodInfo(method());
     m_methodLabel->setString(info.name);
-    m_methodLabel->limitLabelWidth(220.f, 0.5f, 0.2f);
-    std::string d = info.desc;
-    d += "\n[" + std::string(info.triggers) + "]";
-    m_descLabel->setString(d.c_str());
+    m_methodLabel->limitLabelWidth(wlay::kTitleMaxW, 0.5f, 0.2f);
+    const std::string desc = kMethodDesc[std::clamp(m_method, 0, kMethodCount - 1)];
+    if (desc != m_lastDesc) {
+        m_lastDesc = desc;
+        fitWrapped(m_descLabel, desc, wlay::kDescMaxW, wlay::kDescMaxH, 0.55f, 0.3f);
+    }
 
     char buf[96];
-    if (m_clip && m_clip->count() > 0) std::snprintf(buf, sizeof buf, "%d (~%d/frame)", m_budget, m_budget / m_clip->count());
-    else std::snprintf(buf, sizeof buf, "%d", m_budget);
-    m_budgetValue->setString(buf);
-    if (m_clip && m_clip->srcDuration > 0.5 && double(m_seconds) > m_clip->srcDuration + 0.5) std::snprintf(buf, sizeof buf, "%d s (el video dura %.0f)", m_seconds, m_clip->srcDuration);
-    else std::snprintf(buf, sizeof buf, "%d s", m_seconds);
-    m_secondsValue->setString(buf);
+    if (maxTotal() < m_total) std::snprintf(buf, sizeof buf, "%d (editor: %d)", m_total, maxTotal());
+    else std::snprintf(buf, sizeof buf, "%d", m_total);
+    m_val[0]->setString(buf);
+    m_val[0]->limitLabelWidth(120.f, 0.32f, 0.18f);
+    std::snprintf(buf, sizeof buf, "%d u (%.1f bloques)", m_sizeU, m_sizeU / 30.0);
+    m_val[1]->setString(buf);
+    if (m_haveVideo) {
+        std::snprintf(buf, sizeof buf, "%.1f s de %.1f", m_start, m_info.duration);
+        m_val[2]->setString(buf);
+        const int n = framesNow();
+        const double fit = maxLengthFit();
+        if (m_length >= fit - 1e-6 && fit < m_info.duration - m_start - 1e-6) std::snprintf(buf, sizeof buf, "%.2f s (%d fr, max)", m_length, n);
+        else std::snprintf(buf, sizeof buf, "%.2f s (%d frames)", m_length, n);
+        m_val[3]->setString(buf);
+    } else {
+        m_val[2]->setString("-"); m_val[3]->setString("-");
+    }
+    m_val[2]->limitLabelWidth(120.f, 0.32f, 0.18f);
+    m_val[3]->limitLabelWidth(130.f, 0.32f, 0.18f);
 
     auto* mod = Mod::get();
     mod->setSavedValue<int>("method", m_method);
-    mod->setSavedValue<int>("budget", m_budget);
-    mod->setSavedValue<int>("seconds", m_seconds);
-    mod->setSavedValue<bool>("fps30", m_fps30);
+    mod->setSavedValue<int>("total", m_total);
+    mod->setSavedValue<int>("size-u", m_sizeU);
+    mod->setSavedValue<int>("fps", m_fps);
+    mod->setSavedValue<int>("mode", int(m_mode));
     mod->setSavedValue<bool>("gray", m_gray);
-    mod->setSavedValue<bool>("chan", m_chan);
 }
 
 void VideoPopup::setStatus(std::string const& a, std::string const& b, std::string const& note) {
     m_statA->setString(a.c_str());
-    m_statA->limitLabelWidth(150.f, 0.8f, 0.35f);
+    m_statA->limitLabelWidth(150.f, 0.85f, 0.4f);
     m_statB->setString(b.c_str());
-    m_statB->limitLabelWidth(150.f, 0.75f, 0.35f);
-    m_noteLabel->setString(note.c_str());
+    m_statB->limitLabelWidth(150.f, 0.75f, 0.4f);
+    fitWrapped(m_noteLabel, note, wlay::kNoteMaxW, wlay::kNoteMaxH, 0.6f, 0.4f);
 }
+
+// ---------------------------------------------------------------- callbacks --
 
 void VideoPopup::stepMethod(int dir) {
-    m_method = (m_method + dir + vx::kCoderCount) % vx::kCoderCount;
+    m_method = (m_method + dir + kMethodCount) % kMethodCount;
     this->refreshLabels();
-    this->schedulePreview();
+    this->scheduleRecompute();
 }
 
-void VideoPopup::onBudgetSlider(CCObject* sender) {
-    int v = sliderToBudget(static_cast<SliderThumb*>(sender)->getValue());
-    if (v == m_budget) return;
-    m_budget = v;
+void VideoPopup::onTotalSlider(CCObject* sender) {
+    const int settingMax = std::clamp(int(Mod::get()->getSettingValue<int>("max-total-objects")), 5000, 500000);
+    const int v = sliderToTotal(static_cast<SliderThumb*>(sender)->getValue(), settingMax);
+    if (v == m_total) return;
+    m_total = v;
+    this->clampClip();                         // mas objetos = cabe mas duracion
+    this->syncSliders();
     this->refreshLabels();
-    this->schedulePreview();
+    this->scheduleRecompute();
 }
 
-void VideoPopup::onSecondsSlider(CCObject* sender) {
-    int v = sliderToSeconds(static_cast<SliderThumb*>(sender)->getValue());
-    if (v == m_seconds) return;
-    m_seconds = v;
-    this->refreshLabels();
-    this->scheduleReload();                     // hay que volver a leer el video con la nueva duracion
+void VideoPopup::onSizeSlider(CCObject* sender) {
+    m_sizeU = sliderToSize(static_cast<SliderThumb*>(sender)->getValue());
+    this->refreshLabels();                     // solo afecta a la colocacion
 }
 
-void VideoPopup::syncFpsChecks(float) {
-    m_chk12->toggle(!m_fps30);
-    m_chk30->toggle(m_fps30);
-}
-void VideoPopup::on12(CCObject*) {
-    m_fps30 = false;                            // los dos checks son excluyentes; el estado visual se corrige justo despues del callback
-    this->scheduleOnce(schedule_selector(VideoPopup::syncFpsChecks), 0.f);
+void VideoPopup::onStartSlider(CCObject* sender) {
+    if (!m_haveVideo) return;
+    m_start = sliderToRange(static_cast<SliderThumb*>(sender)->getValue(), 0.0, std::max(0.1, m_info.duration - 0.5), 0.1);
+    this->clampClip();
+    this->syncSliders();
     this->refreshLabels();
-    this->scheduleReload();
+    this->scheduleRecompute();                 // la vista previa es el frame del instante de inicio
 }
-void VideoPopup::on30(CCObject*) {
-    m_fps30 = true;
-    this->scheduleOnce(schedule_selector(VideoPopup::syncFpsChecks), 0.f);
+
+void VideoPopup::onLenSlider(CCObject* sender) {
+    if (!m_haveVideo) return;
+    const double maxLen = std::max(0.5, std::min(m_info.duration - m_start, maxLengthFit()));
+    m_length = sliderToRange(static_cast<SliderThumb*>(sender)->getValue(), std::min(0.5, maxLen), maxLen, 0.05);
+    this->clampClip();
     this->refreshLabels();
-    this->scheduleReload();
+    if (m_hasResult && !m_build) this->applyPreview(nullptr);
 }
+
 void VideoPopup::onGray(CCObject*) {
-    m_gray = !m_gray;                           // en el callback el toggler aun no ha cambiado su estado
+    m_gray = !m_gray;                          // en el callback el toggler aun no ha cambiado su estado
     this->refreshLabels();
-    this->scheduleReload();
+    this->scheduleRecompute();
 }
-void VideoPopup::onChan(CCObject*) {
-    m_chan = !m_chan;
+
+void VideoPopup::setFps(int fps) {
+    m_fps = fps;
+    this->scheduleOnce(schedule_selector(VideoPopup::syncChecks), 0.f);
+    this->clampClip();
+    this->syncSliders();
     this->refreshLabels();
+    this->scheduleRecompute();
+}
+
+void VideoPopup::setMode(gdx::PlayMode m) {
+    m_mode = m;
+    this->scheduleOnce(schedule_selector(VideoPopup::syncChecks), 0.f);
+    this->refreshLabels();
+}
+
+// El CCMenuItemToggler cambia su estado DESPUES de llamar al callback: sin esto, pulsar la casilla ya marcada la dejaria desmarcada
+// y las dos opciones sin elegir. Un fotograma despues se fuerza el estado real.
+void VideoPopup::syncChecks(float) {
+    m_chk12->toggle(m_fps == 12);
+    m_chk30->toggle(m_fps == 30);
+    m_chkToggle->toggle(m_mode == gdx::PlayMode::Toggle);
+    m_chkSpawn->toggle(m_mode == gdx::PlayMode::Spawn);
+    m_chkGray->toggle(m_gray);
 }
 
 void VideoPopup::onSettings(CCObject*) { openSettingsPopup(Mod::get()); }
 
-// ------------------------------------------------------------ cargar video --
+// ---------------------------------------------------------------- elegir video --
 
 void VideoPopup::onPick(CCObject*) {
     if (m_build) return;
     auto options = file::FilePickOptions{
         std::nullopt,
-        {{"Video o GIF", {"*.mp4", "*.mov", "*.mkv", "*.webm", "*.avi", "*.wmv", "*.m4v", "*.gif"}}}
+        {{"Video MP4", {"*.mp4", "*.m4v", "*.mov"}}}
     };
     async::spawn(
         file::pick(file::PickMode::OpenFile, options),
         [weak = WeakRef<VideoPopup>(this)](auto result) {
             auto self = weak.lock();
             if (!self) return;
-            if (!result.isOk()) { self->setStatus("No se pudo abrir", "el selector de archivos"); return; }
+            if (!result.isOk()) {
+                self->setStatus("No se pudo abrir", "el selector de archivos");
+                return;
+            }
             auto opt = result.unwrap();
             if (!opt) return;                                    // cancelado
-            self->load(opt.value());
+            self->loadVideo(utils::string::pathToString(opt.value()));
         }
     );
 }
 
-void VideoPopup::onPickFolder(CCObject*) {
-    if (m_build) return;
-    async::spawn(
-        file::pick(file::PickMode::OpenFolder, file::FilePickOptions{}),
-        [weak = WeakRef<VideoPopup>(this)](auto result) {
-            auto self = weak.lock();
-            if (!self) return;
-            if (!result.isOk()) { self->setStatus("No se pudo abrir", "el selector de carpetas"); return; }
-            auto opt = result.unwrap();
-            if (!opt) return;
-            self->load(opt.value());
-        }
-    );
-}
-
-void VideoPopup::load(std::filesystem::path const& path) {
-    m_path = path;
-    this->reload();
-}
-
-void VideoPopup::scheduleReload() {
-    if (m_path.empty() || m_build) return;
-    this->unschedule(schedule_selector(VideoPopup::reload));
-    this->scheduleOnce(schedule_selector(VideoPopup::reload), 0.6f);
-}
-
-void VideoPopup::reload(float) {
-    if (m_path.empty() || m_build) return;
-    if (m_load) m_load->prog.cancel.store(true);
-    auto* mod = Mod::get();
-    auto job = std::make_shared<LoadJob>();
-    job->id = ++m_jobCounter;
-    job->req.path = m_path;
-    job->req.fps = fps();
-    job->req.startSec = mod->getSettingValue<double>("start-sec");
-    job->req.maxSeconds = m_seconds;
-    job->req.maxSide = int(mod->getSettingValue<int>("max-raster"));
-    job->req.seqFps = mod->getSettingValue<double>("sequence-fps");
-    job->req.gray = m_gray;
-    job->req.ffmpegPath = mod->getSettingValue<std::string>("ffmpeg-path");
-    job->req.prog = &job->prog;
-    m_load = job;
+void VideoPopup::loadVideo(std::string const& path) {
     m_hasResult = false;
-    this->setStatus("Leyendo el video...", "", "");
-    std::thread([job]() {
-        try {
-            std::string err;
-            if (vx::decodeVideo(job->req, job->clip, err)) job->shots = int(vx::detectShots(job->clip).size());
-            else job->error = err;
-        } catch (std::exception const& e) {
-            job->error = std::string("Error al leer el video: ") + e.what();
-        } catch (...) {
-            job->error = "Error interno al leer el video";
-        }
-        job->done.store(true, std::memory_order_release);
-    }).detach();
+    auto info = vid::probe(path);
+    if (!info.ok) {
+        m_haveVideo = false;
+        this->setStatus("Video no valido", "", info.error);
+        return;
+    }
+    m_path = path;
+    m_info = info;
+    m_haveVideo = true;
+    m_loadNote.clear();
+    if (!m_info.decodable())
+        m_loadNote = "Codec " + m_info.codecName() + ": tu sistema puede no decodificarlo (H.264 siempre funciona).";
+    else if (m_info.fps > 0 && m_fps == 30 && m_info.fps < 20)
+        m_loadNote = "El video va a ~" + std::to_string(int(std::lround(m_info.fps))) + " fps: a 30 fps se repetiran frames (usa 12).";
+    m_start = 0;
+    m_length = m_info.duration;
+    this->clampClip();
+    this->syncSliders();
+    this->refreshLabels();
+    this->recompute();
 }
 
-void VideoPopup::schedulePreview() {
-    if (!m_clip || m_build) return;
-    this->unschedule(schedule_selector(VideoPopup::recomputePreview));
-    this->scheduleOnce(schedule_selector(VideoPopup::recomputePreview), 0.35f);
+// ----------------------------------------------------------------- calculo --
+
+gdx::Options VideoPopup::makeOptions(int budget) const {
+    gdx::Options o;
+    auto* mod = Mod::get();
+    o.budget = std::max(1, budget);
+    o.maxRaster = std::clamp(int(mod->getSettingValue<int>("max-raster")), 160, 1024);
+    o.alphaThreshold = 128;
+    o.quality = qualityFromSetting();
+    o.colorChannels = false;           // sin Color triggers: el color va en HSV dentro de cada objeto
+    o.mainChannels = false;
+    o.lightSpecialChannels = true;
+    o.grayscale = m_gray;
+    o.maxChannels = 0;
+    return o;
 }
 
-void VideoPopup::recomputePreview(float) {
-    if (!m_clip || m_build) return;
+gdx::GdExportOptions VideoPopup::makeExportOptions() const {
+    auto* mod = Mod::get();
+    gdx::GdExportOptions eo;
+    eo.longSide = m_sizeU;
+    eo.colorChannel = std::clamp(int(mod->getSettingValue<int>("color-channel")), 1, 1020);
+    eo.bleed = std::clamp(mod->getSettingValue<double>("bleed"), 0.0, 2.0);
+    eo.flipRotation = mod->getSettingValue<bool>("flip-rotation");
+    return eo;
+}
+
+gdx::VideoPlanOptions VideoPopup::makePlanOptions() const {
+    auto* mod = Mod::get();
+    gdx::VideoPlanOptions po;
+    po.maxTotal = maxTotal();
+    po.minPerFrame = std::clamp(int(mod->getSettingValue<int>("min-per-frame")), 30, 3000);
+    po.dedupe = mod->getSettingValue<bool>("dedupe");
+    po.dedupePsnr = std::clamp(mod->getSettingValue<double>("dedupe-psnr"), 30.0, 60.0);
+    po.adaptive = mod->getSettingValue<bool>("adaptive");
+    po.stabilizeTol = std::clamp(int(mod->getSettingValue<int>("stabilize")), 0, 20);
+    return po;
+}
+
+void VideoPopup::scheduleRecompute() {
+    if (!m_haveVideo || m_build) return;
+    this->unschedule(schedule_selector(VideoPopup::recompute));
+    this->scheduleOnce(schedule_selector(VideoPopup::recompute), 0.35f);
+}
+
+void VideoPopup::recompute(float) {
+    if (!m_haveVideo || m_build) return;
+    if (m_job) m_job->prog.cancel.store(true);
+    auto* mod = Mod::get();
     auto job = std::make_shared<PreviewJob>();
     job->id = ++m_jobCounter;
-    job->clip = m_clip;
-    job->params = makeParams(int(std::lround(m_clip->fps)));
-    m_prev = job;
+    job->path = m_path;
+    job->info = m_info;
+    job->start = m_start;
+    job->fps = m_fps;
+    job->storeLong = storeLong(std::max(1, framesNow()));
+    job->ffmpegPath = mod->getSettingValue<std::string>("ffmpeg-path");
+    job->allowFfmpeg = mod->getSettingValue<bool>("use-ffmpeg");
+    job->method = method();
+    job->opt = makeOptions(std::max(100, perFrameEstimate()));
+    job->opt.maxRaster = std::min(job->opt.maxRaster, gdx::rasterFor(job->opt.budget, double(m_info.displayW) / std::max(1, m_info.displayH), job->storeLong));
+    m_job = job;
+    this->setStatus("Leyendo el video...");
     std::thread([job]() {
-        try { job->result = previewFor(*job->clip, job->params); }
-        catch (...) { job->result = vx::Result{}; job->result.note = "Error interno en la vista previa"; }
+        try {
+            vid::SampleSpec sp;
+            sp.path = job->path; sp.start = job->start; sp.fps = job->fps; sp.storeLong = job->storeLong;
+            sp.length = 1.5 / job->fps;                          // exactamente 1 frame
+            sp.ffmpegPath = job->ffmpegPath; sp.allowFfmpeg = job->allowFfmpeg;
+            auto sr = vid::sampleVideo(sp, job->info);
+            if (!sr.ok()) { job->error = sr.error.empty() ? "No se pudo decodificar" : sr.error; }
+            else {
+                job->backend = sr.backend;
+                job->result = gdx::convert(sr.frames[0], job->method, job->opt, &job->prog);
+            }
+        } catch (...) {
+            job->error = "Error interno al calcular";
+        }
         job->done.store(true, std::memory_order_release);
     }).detach();
 }
 
 void VideoPopup::tick(float) {
-    // --- lectura del video
-    if (m_load && m_load->done.load(std::memory_order_acquire)) {
-        auto job = m_load; m_load = nullptr;
-        {
-            if (!job->error.empty()) {
-                m_clip = nullptr;
-                this->setStatus("No se pudo leer", "", job->error);
-                FLAlertLayer::create("Video Importer", job->error.c_str(), "OK")->show();
-            } else {
-                m_clip = std::make_shared<vx::Clip>(std::move(job->clip));
-                m_shots = job->shots;
-                char a[96], b[96];
-                std::snprintf(a, sizeof a, "%d frames | %dx%d", m_clip->count(), m_clip->w, m_clip->h);
-                std::snprintf(b, sizeof b, "%.1f s | %d escenas", m_clip->seconds(), m_shots);
-                this->setStatus(a, b, "");
-                this->refreshLabels();
-                this->recomputePreview();
-            }
-        }
-    } else if (m_load) {
-        char buf[64];
-        std::snprintf(buf, sizeof buf, "Leyendo el video... %d%%", int(m_load->prog.fraction.load() * 100.f));
-        this->setStatus(buf, "");
-    }
-    // --- codificacion completa
     if (m_build) {
         if (m_build->done.load(std::memory_order_acquire)) {
-            auto job = m_build; m_build = nullptr;
+            auto job = m_build;
+            m_build = nullptr;
             if (!job->prog.cancel.load()) this->finishBuild(job);
             return;
         }
         char buf[64];
-        std::snprintf(buf, sizeof buf, "Convirtiendo... %d%%", int(m_build->prog.fraction.load() * 100.f));
+        if (m_build->phase.load() == 0) std::snprintf(buf, sizeof buf, "Decodificando... %d%%", int(m_build->decodeProg.load() * 100.f));
+        else std::snprintf(buf, sizeof buf, "Convirtiendo... %d%%", int(m_build->prog.fraction.load() * 100.f));
         this->setStatus(buf, "No cierres la ventana");
         return;
     }
-    // --- vista previa
-    if (m_prev && m_prev->done.load(std::memory_order_acquire)) {
-        auto job = m_prev; m_prev = nullptr;
-        if (job->id <= m_jobCounter) this->applyPreview(job);
+    if (!m_job) return;
+    if (m_job->done.load(std::memory_order_acquire)) {
+        auto job = m_job;
+        m_job = nullptr;
+        if (job->id == m_jobCounter) this->applyPreview(job);
     }
 }
 
 void VideoPopup::applyPreview(std::shared_ptr<PreviewJob> job) {
-    if (job) { m_result = std::move(job->result); m_hasResult = !m_result.shapes.empty(); }
-    if (!m_hasResult) { this->setStatus("No se genero vista previa", "", m_result.note); return; }
-    this->buildPreviewSprite();
-    if (m_clip) {
-        char a[96], b[96];
-        std::snprintf(a, sizeof a, "%d frames | %dx%d", m_clip->count(), m_clip->w, m_clip->h);
-        std::snprintf(b, sizeof b, "%.1f s | %d escenas", m_clip->seconds(), m_shots);
-        this->setStatus(a, b, m_result.note);
+    if (job) {
+        if (!job->error.empty()) {
+            m_hasResult = false;
+            this->setStatus("No se pudo leer el video", "", "Mira el aviso");
+            showAlert("Video Importer", job->error + "\n\nSi es un MP4 de H.264 y falla, prueba a re-exportarlo (H.264, sin HDR) o instala ffmpeg en PC (Ajustes).");
+            return;
+        }
+        m_result = std::move(job->result);
+        m_hasResult = !m_result.shapes.empty();
+        if (!m_hasResult) { this->setStatus("No se genero ningun objeto", "", m_result.note); return; }
+        this->buildPreview();
     }
+    if (!m_hasResult || !m_haveVideo) return;
+    const int n = framesNow();
+    const int pf = perFrameEstimate();
+    const double fit = maxLengthFit();
+    char a[96], b[96];
+    std::snprintf(a, sizeof a, "%d frames | %s", n, baseName(m_path).c_str());
+    std::snprintf(b, sizeof b, "~%d obj/frame | %.1f dB", pf, m_result.psnr);
+    std::string note = m_loadNote;
+    if (pf < 400) note = "Pocos objetos por frame: baja la duracion o sube el tope. " + note;
+    else if (m_length >= fit - 1e-6 && fit < m_info.duration - m_start - 1e-6) note = "Duracion limitada por el tope de objetos. " + note;
+    this->setStatus(a, b, note);
 }
 
-void VideoPopup::buildPreviewSprite() {
+void VideoPopup::buildPreview() {
     if (m_preview) { m_preview->removeFromParent(); m_preview = nullptr; }
     int w = m_result.rasterW, h = m_result.rasterH;
     if (w <= 0 || h <= 0) return;
-    vx::Image img = gdx::renderShapesScaled(m_result.shapes, w, h, 1);
-    w = img.w; h = img.h;
+    gdx::Image img = gdx::renderShapes(m_result.shapes, w, h);
     std::vector<uint8_t> buf(size_t(w) * h * 4);
     for (size_t i = 0; i < size_t(w) * h; ++i) {
         const uint8_t* p = &img.rgba[i * 4];
-        float a = p[3] / 255.f;
-        for (int c = 0; c < 3; ++c) buf[i * 4 + c] = uint8_t(p[c] * a + 40 * (1.f - a));
+        const float al = p[3] / 255.f;
+        for (int c = 0; c < 3; ++c) buf[i * 4 + c] = uint8_t(p[c] * al + 40 * (1.f - al));
         buf[i * 4 + 3] = 255;
     }
     auto tex = new CCTexture2D();
-    if (!tex->initWithData(buf.data(), kCCTexture2DPixelFormat_RGBA8888, w, h, CCSize(float(w), float(h)))) { delete tex; return; }
+    if (!tex->initWithData(buf.data(), kCCTexture2DPixelFormat_RGBA8888, w, h, CCSize(float(w), float(h)))) {
+        delete tex;
+        return;
+    }
     tex->autorelease();
     m_preview = CCSprite::createWithTexture(tex);
     if (!m_preview) return;
-    float aspect = m_result.aspect > 0 ? m_result.aspect : 1.f;
-    float tw = aspect >= 1.f ? kPrevSize : kPrevSize * aspect;
-    float th = aspect >= 1.f ? kPrevSize / aspect : kPrevSize;
+    const float aspect = m_result.aspect > 0 ? m_result.aspect : 1.f;
+    const float tw = aspect >= 1.f ? kPrevSize : kPrevSize * aspect;
+    const float th = aspect >= 1.f ? kPrevSize / aspect : kPrevSize;
     m_preview->setScaleX(tw / w);
     m_preview->setScaleY(th / h);
     m_preview->setPosition({kPrevSize / 2, kPrevSize / 2});
     m_previewHolder->addChild(m_preview);
 }
 
-// ---------------------------------------------------------------- nivel -----
+// --------------------------------------------------------------- colocar ----
 
-int VideoPopup::editorLimit() const {
-    return std::clamp(int(Mod::get()->getSettingValue<int>("editor-limit")), 50000, 2000000);
-}
-int VideoPopup::editorRoom() const {
+void VideoPopup::startPlacement(std::string const& chain, size_t objectCount, std::string const& doneMsg) {
     auto lel = LevelEditorLayer::get();
-    int cur = (lel && lel->m_objects) ? int(lel->m_objects->count()) : 0;
-    return std::max(0, editorLimit() - 3000 - cur);
+    if (!lel) return;
+    auto runner = PlaceRunner::create();
+    if (!runner) return;
+    lel->addChild(runner);
+    runner->begin(splitChain(chain, 1500), objectCount, Mod::get()->getSettingValue<bool>("select-after"), doneMsg);
 }
 
-CCPoint VideoPopup::viewCenter() const {
+CCPoint VideoPopup::placementOrigin() const {
+    // Con un unico objeto seleccionado, el video se centra en el; si no, en el centro de la vista del editor.
     if (m_editor) {
         auto sel = m_editor->getSelectedObjects();
         if (sel && sel->count() == 1) {
@@ -554,6 +727,8 @@ CCPoint VideoPopup::viewCenter() const {
     return {0, 0};
 }
 
+// Grupo mas alto que ya usa el nivel (objetos y destinos de triggers). Escrito con "requires" para
+// compilar aunque los bindings cambien la forma de m_groups.
 int VideoPopup::maxUsedGroup() const {
     int mx = 0;
     auto lel = LevelEditorLayer::get();
@@ -583,158 +758,154 @@ int VideoPopup::maxUsedGroup() const {
     return mx;
 }
 
-// canales de color 2..999 que el nivel todavia no usa (los mosaicos los reutilizan escena a escena)
-// Los `requires` van dentro de lambdas genericas (contexto de plantilla): si un campo no existe en esta version de los bindings,
-// la rama se descarta en vez de dar error de compilacion.
-std::vector<int> VideoPopup::freeChannels() const {
-    std::set<int> used;
-    auto lel = LevelEditorLayer::get();
-    auto addObj = [&](auto* o) {
-        if constexpr (requires { o->m_baseColor->m_colorID; }) { if (o->m_baseColor) used.insert(int(o->m_baseColor->m_colorID)); }
-        if constexpr (requires { o->m_detailColor->m_colorID; }) { if (o->m_detailColor) used.insert(int(o->m_detailColor->m_colorID)); }
-    };
-    auto addEffect = [&](auto* e) {
-        if constexpr (requires { e->m_targetColor; }) used.insert(int(e->m_targetColor));
-        if constexpr (requires { e->m_targetColorID; }) used.insert(int(e->m_targetColorID));
-    };
-    if (lel && lel->m_objects) {
-        for (auto* obj : CCArrayExt<GameObject*>(lel->m_objects)) {
-            if (!obj) continue;
-            addObj(obj);
-            if (auto* eff = typeinfo_cast<EffectGameObject*>(obj)) addEffect(eff);
-        }
-    }
-    std::vector<int> v;
-    for (int c = 2; c <= vx::kChannelMax; ++c) if (!used.count(c)) v.push_back(c);
-    return v;
-}
-
-vx::Params VideoPopup::makeParams(int fpsV) const {
-    auto* mod = Mod::get();
-    vx::Params P;
-    P.coder = vx::Coder(m_method);
-    P.fps = fpsV;
-    P.budget = std::min(m_budget, std::max(2000, this->editorRoom()));
-    P.maxRaster = int(mod->getSettingValue<int>("max-raster"));
-    P.quality = qualityFromSetting();
-    P.gray = m_gray;
-    P.channels = m_chan;
-    P.paletteK = int(mod->getSettingValue<int>("palette-colors"));
-    P.smooth = mod->getSettingValue<bool>("smooth-colors");
-    P.reassert = mod->getSettingValue<bool>("reassert");
-    P.kfStep = int(mod->getSettingValue<int>("crossfade-step"));
-    P.mosaicMaxCells = int(mod->getSettingValue<int>("mosaic-max-cells"));
-    P.pulseMaxCells = int(mod->getSettingValue<int>("pulse-max-cells"));
-    int fg = int(mod->getSettingValue<int>("first-group"));
-    P.firstGroup = fg > 0 ? fg : this->maxUsedGroup() + 1;
-    P.freeChannels = this->freeChannels();
-    P.colorChannel = int(mod->getSettingValue<int>("color-channel"));
-    P.bleed = mod->getSettingValue<double>("bleed");
-    P.alphaThr = 128;
-    P.flipRotation = mod->getSettingValue<bool>("flip-rotation");
-    P.threads = int(std::clamp<unsigned>(unsigned(std::max(1, int(mod->getSettingValue<int>("threads")))), 1u, std::max(1u, std::thread::hardware_concurrency())));
-    // zona de la cinta: por defecto ARRIBA del nivel (el jugador nunca la toca); o justo en la vista del editor
-    CCPoint vc = this->viewCenter();
-    double fw = 569, fh = 320;
-    if (m_clip) vx::frameBox(m_clip->w, m_clip->h, fw, fh);
-    P.originX = vc.x - (fw / 2 + 420.0);
-    if (mod->getSettingValue<std::string>("origin-mode") == "En la vista del editor") P.originY = vc.y - (fh / 2 + 260.0);
-    else P.originY = double(mod->getSettingValue<int>("origin-y"));
-    P.startX = mod->getSettingValue<bool>("triggers-at-start") ? -30.0 : P.originX - 100.0;
-    return P;
-}
-
-void VideoPopup::startPlacement(std::vector<std::string> chunks, size_t objectCount, std::string const& doneMsg) {
-    auto lel = LevelEditorLayer::get();
-    if (!lel) return;
-    auto runner = PlaceRunner::create();
-    if (!runner) return;
-    lel->addChild(runner);
-    runner->begin(std::move(chunks), objectCount, Mod::get()->getSettingValue<bool>("select-after"), doneMsg);
-}
-
-// --------------------------------------------------------------- colocar ----
-
 void VideoPopup::onPlace(CCObject*) {
     if (m_build) return;
-    if (m_load) { FLAlertLayer::create("Video Importer", "Todavia se esta leyendo el video. Espera un momento.", "OK")->show(); return; }
-    if (!m_clip) { FLAlertLayer::create("Video Importer", "Primero elige un video, un GIF o una carpeta de imagenes.", "OK")->show(); return; }
-    if (!LevelEditorLayer::get()) return;
-    if (this->editorRoom() < 2000) {
-        FLAlertLayer::create("Video Importer", "El nivel ya esta casi en el limite de objetos del editor (ajuste \"Limite de objetos del editor\"). No hay sitio para el video.", "OK")->show();
+    if (m_job) {
+        FLAlertLayer::create("Video Importer", "Todavia se esta calculando la vista previa. Espera un momento.", "OK")->show();
         return;
     }
-    auto job = std::make_shared<BuildJob>();
-    job->clip = m_clip;
-    job->fps = int(std::lround(m_clip->fps));
-    job->params = this->makeParams(job->fps);
-    m_build = job;
-    std::thread([job]() {
-        try { job->out = vx::encode(*job->clip, job->params, &job->prog); }
-        catch (std::exception const& e) { job->out.error = std::string("Error interno: ") + e.what(); }
-        catch (...) { job->out.error = "Error interno al convertir"; }
-        job->done.store(true, std::memory_order_release);
-    }).detach();
-}
-
-// Patron de prueba: 7 escenas sinteticas de 1 s (una por metodo) para comprobar en el juego que los triggers funcionan.
-void VideoPopup::onTest(CCObject*) {
-    if (m_build) return;
+    if (!m_haveVideo || !m_hasResult) {
+        FLAlertLayer::create("Video Importer", "Primero elige un video MP4.", "OK")->show();
+        return;
+    }
     if (!LevelEditorLayer::get()) return;
+    if (this->editorRoom() < 500) {
+        FLAlertLayer::create("Video Importer", "El nivel ya esta casi en el limite de objetos del editor (ver Ajustes). No hay sitio para el video.", "OK")->show();
+        return;
+    }
+    auto* mod = Mod::get();
+    const int N = framesNow();
+    if (N < 2 && !mod->getSettingValue<bool>("only-first-frame")) {
+        FLAlertLayer::create("Video Importer", "El tramo elegido es demasiado corto (hacen falta al menos 2 frames).", "OK")->show();
+        return;
+    }
+
+    // Prueba rapida: solo el primer frame, estatico, sin triggers
+    if (mod->getSettingValue<bool>("only-first-frame")) {
+        auto eo = makeExportOptions();
+        const CCPoint origin = placementOrigin();
+        eo.originX = origin.x; eo.originY = origin.y;
+        eo.monoFastPath = false;
+        std::string s = gdx::toGdString(m_result, eo);
+        if (s.empty()) { showAlert("Video Importer", "No se pudo generar el frame."); return; }
+        this->startPlacement(s, m_result.shapes.size(), "Frame colocado (sin triggers): " + std::to_string(m_result.shapes.size()) + " objetos");
+        this->onClose(nullptr);
+        return;
+    }
+
     auto job = std::make_shared<BuildJob>();
-    job->test = true;
-    job->fps = fps();
-    job->params = this->makeParams(job->fps);
+    job->path = m_path;
+    job->info = m_info;
+    job->fps = m_fps;
+    job->method = method();
+    job->po = makePlanOptions();
+    job->opt = makeOptions(1000);
+    job->spec.path = m_path;
+    job->spec.start = m_start;
+    job->spec.length = m_length;
+    job->spec.fps = m_fps;
+    job->spec.storeLong = storeLong(N);
+    job->spec.ffmpegPath = mod->getSettingValue<std::string>("ffmpeg-path");
+    job->spec.allowFfmpeg = mod->getSettingValue<bool>("use-ffmpeg");
+    job->opt.maxRaster = std::clamp(int(mod->getSettingValue<int>("max-raster")), 160, 1024);
+    unsigned hw = std::max(1u, std::thread::hardware_concurrency());
+    job->threads = int(std::clamp<unsigned>(unsigned(std::max(1, int(mod->getSettingValue<int>("threads")))), 1u, hw));
     m_build = job;
+    this->unschedule(schedule_selector(VideoPopup::recompute));
+    this->setStatus("Decodificando... 0%", "No cierres la ventana");
+
     std::thread([job]() {
-        try { job->out = vx::encodeTestPattern(job->params, job->fps); }
-        catch (...) { job->out.error = "Error interno en el patron de prueba"; }
+        try {
+            auto sr = vid::sampleVideo(job->spec, job->info, &job->decodeProg, &job->cancelDecode);
+            job->backend = sr.backend;
+            job->srcW = sr.srcW; job->srcH = sr.srcH;
+            if (!sr.ok()) {
+                job->error = sr.error.empty() ? "No se pudo decodificar el video" : sr.error;
+            } else if (!job->prog.cancel.load()) {
+                gdx::VideoClip clip;
+                clip.fps = job->fps;
+                clip.frames = std::move(sr.frames);
+                gdx::stabilizeFrames(clip.frames, job->po.stabilizeTol);
+                job->plan = gdx::planVideo(clip, job->po);
+                if (job->plan.avgPerGroup < 30.0) {
+                    job->error = "No caben tantos frames con el tope de objetos. Acorta la duracion o sube el tope total.";
+                } else {
+                    job->phase.store(1);
+                    job->results = gdx::convertVideo(clip, job->plan, job->method, job->opt, &job->prog, job->threads);
+                }
+            }
+        } catch (std::exception const& e) {
+            job->error = std::string("Error interno: ") + e.what();
+        } catch (...) {
+            job->error = "Error interno (memoria?)";
+        }
         job->done.store(true, std::memory_order_release);
     }).detach();
 }
 
 void VideoPopup::finishBuild(std::shared_ptr<BuildJob> job) {
-    auto const& o = job->out;
-    if (!o.ok()) {
-        std::string e = o.error.empty() ? "No se genero nada" : o.error;
-        this->setStatus("No se pudo convertir", "", e);
-        FLAlertLayer::create("Video Importer", e.c_str(), "OK")->show();
+    auto lel = LevelEditorLayer::get();
+    if (!lel) return;
+    auto* mod = Mod::get();
+    if (!job->error.empty()) {
+        showAlert("Video Importer", job->error);
+        this->applyPreview(nullptr);
         return;
     }
-    if (int(o.objects()) > this->editorRoom()) {
-        std::string e = "La animacion tiene " + std::to_string(o.objects()) + " objetos y en el editor solo caben " + std::to_string(this->editorRoom()) +
-                        ". Baja el presupuesto o sube el \"Limite de objetos del editor\" en Ajustes (solo si tu GD lo permite).";
-        FLAlertLayer::create("Video Importer", e.c_str(), "OK")->show();
+
+    gdx::VideoExportParams p;
+    p.eo = makeExportOptions();
+    p.mode = m_mode;
+    p.blockSeconds = std::clamp(mod->getSettingValue<double>("spawn-block"), 0.25, 4.0);
+    const CCPoint origin = placementOrigin();
+    p.eo.originX = origin.x;
+    p.eo.originY = origin.y;
+    p.baseGroup = std::max(this->maxUsedGroup() + 1, std::clamp(int(mod->getSettingValue<int>("first-group")), 1, 9000));
+    if (mod->getSettingValue<bool>("triggers-at-start")) {
+        p.trigX = -30.0;
+    } else {
+        const gdx::Result* r0 = nullptr;
+        for (auto& r : job->results) if (!r.shapes.empty()) { r0 = &r; break; }
+        p.trigX = r0 ? origin.x - gdx::gdImageSize(*r0, p.eo).w * 0.5 - 30.0 : -30.0;
+    }
+
+    std::string err;
+    std::string str = gdx::buildVideoString(job->results, job->plan, p, &err);
+    if (str.empty()) {
+        showAlert("Video Importer", err.empty() ? std::string("No se pudo generar la animacion.") : err);
+        this->applyPreview(nullptr);
         return;
     }
-    char a[128], b[128];
-    std::snprintf(a, sizeof a, "%zu objetos | %zu escenas", o.objects(), o.shots.size());
-    std::snprintf(b, sizeof b, "%.1f dB | %.1f s | %d grupos", o.psnr, o.seconds, o.groupsUsed);
-    this->setStatus(a, b, o.note);
-    std::string msg = std::string(job->test ? "Patron de prueba" : "Video") + " colocado: " + std::to_string(o.objects()) + " objetos, " +
-                      std::to_string(o.shots.size()) + " escenas, " + std::to_string(int(o.psnr)) + " dB. Dale a jugar";
-    this->startPlacement(job->out.chunks, o.objects(), msg);
-    if (job->test) {
-        FLAlertLayer::create("Patron de prueba",
-            "Dale a jugar: debes ver <cy>7 escenas de 1 s</c> y el bucle. En cada una se ve un cuadrado blanco que avanza:\n"
-            "1 cinta (rojo) | 2 mosaico (verde, se oscurece suave) | 3 mosaico+detalle (azul) | 4 epocas (amarillo) | "
-            "5 panoramica (morado, textura que se desplaza) | 6 fundido (cian) | 7 pulsos (naranja).\n"
-            "Si una escena sale mal, ese trigger no se comporta como espera el mod en tu version de GD: usa los otros metodos.",
-            "OK")->show();
+    size_t count = 1;
+    for (char c : str) if (c == ';') ++count;
+    if (long(count) > long(this->editorRoom())) {          // GD cortaria la cadena y se perderian objetos: mejor no colocar nada
+        char em[240];
+        std::snprintf(em, sizeof em, "La animacion necesita %zu objetos y en el editor solo caben %d mas (ver \"Limite de objetos del editor\" en Ajustes). Baja el tope total o la duracion.", count, this->editorRoom());
+        showAlert("Video Importer", em);
+        this->applyPreview(nullptr);
+        return;
     }
+    const auto S = gdx::scheduleVideo(job->plan, p.mode, nullptr, p.blockSeconds);
+    char msg[220];
+    std::snprintf(msg, sizeof msg, "Video colocado: %d frames (%d distintos), %zu objetos, grupos %d-%d | %s%s",
+                  job->plan.frames, job->plan.groups(), count, p.baseGroup, p.baseGroup + std::max(0, S.groupsNeeded - 1),
+                  p.mode == gdx::PlayMode::Toggle ? "Toggle" : "Spawn", job->backend.empty() ? "" : (" | " + job->backend).c_str());
+    this->startPlacement(str, count, msg);
+    this->onClose(nullptr);
 }
 
 void VideoPopup::onInfo(CCObject*) {
-    FLAlertLayer::create(
+    MDPopup::create(
         "Video Importer (beta)",
-        "El video se parte en <cy>escenas</c>. Cada escena vive en su propio cuadro del editor (zona alta del nivel) y una "
-        "<cy>Static Camera</c> salta de una a otra: GD solo dibuja lo que esta en camara, asi no hay lag aunque haya 400.000 objetos.\n"
-        "- <cg>12 / 30 fps</c>: tasa a la que se muestrea el video (marca uno). Mas fps = mas fluido pero mas objetos.\n"
-        "- <cg>Presupuesto</c>: objetos totales (formas + triggers). Nunca se supera.\n"
-        "- <cg>Metodo 8 (Director)</c> elige el mejor metodo para cada escena.\n"
-        "- <cg>Prueba</c>: coloca 7 escenas de 1 s para verificar los triggers en tu GD.\n"
-        "- En el editor todo se ve apilado/en calma: <cy>dale a jugar</c> para ver el video (la camara salta sola).\n"
-        "- MP4/MOV: Windows lo lee nativo; macOS/Linux necesitan <cy>ffmpeg</c>. En Android/iOS usa GIF o una carpeta de imagenes.\n"
+        "Elige un <cy>MP4</c> (H.264 funciona siempre; HEVC/VP9/AV1 dependen de tu sistema). Cada frame se convierte en objetos con el <cy>metodo</c> elegido y va en su propio <cy>grupo</c>.\n\n"
+        "- <cg>12 fps / 30 fps</c>: a cuantos fotogramas por segundo se muestrea el video. 12 = mas objetos por frame y videos mas largos; 30 = mas fluido.\n"
+        "- <cg>Objetos totales</c>: presupuesto de TODA la animacion (por defecto 450000). Se reparte entre los frames segun su detalle; los frames casi iguales se reutilizan.\n"
+        "- <cg>Inicio / Duracion</c>: el tramo del video. La duracion maxima sale del tope de objetos (minimo por frame en Ajustes).\n\n"
+        "<cy>Toggle (exacto)</c>: un Spawn por paso con su instante absoluto; la animacion no se desincroniza nunca.\n"
+        "<cy>Spawn (ligero)</c>: los pasos se encadenan y se resincronizan cada segundo; la mitad de Spawn y sin pico al empezar cada vuelta.\n\n"
+        "Solo se usan <cy>Toggle</c> y <cy>Spawn</c> triggers (nada de Color, Alpha ni Pulse): el color de cada objeto va en HSV. "
+        "Los frames ocultos quedan <cg>desactivados</c> (sin lag). Los 2 triggers de arranque van en x=-30 y la animacion se repite <cg>para siempre</c>.\n\n"
+        "En el editor los frames se ven superpuestos: <cy>dale a jugar</c>. Con 400-500k objetos GD tarda en cargar y necesita un editor sin limite de objetos.\n\n"
         "No se puede deshacer: <cr>guarda antes</c>.",
         "OK"
     )->show();

@@ -10,13 +10,23 @@ endif()
 
 set(CMAKE_CXX_VISIBILITY_PRESET hidden)
 
-project(VideoImporter VERSION 0.1.0)
+project(VideoImporter VERSION 1.0.0)
+
+# Decodificador de video: un archivo por plataforma (cada uno se compila solo donde existe su API) + el respaldo de ffmpeg para PC.
+set(VIDEO_SOURCES
+    src/video/decode_ffmpeg_cli.cpp
+    src/video/decode_win.cpp        # solo Windows   (Media Foundation)
+    src/video/decode_android.cpp    # solo Android   (NDK AMediaCodec)
+)
+if (APPLE)
+    enable_language(OBJCXX)
+    list(APPEND VIDEO_SOURCES src/video/decode_apple.mm)    # macOS / iOS (AVFoundation)
+endif()
 
 add_library(${PROJECT_NAME} SHARED
     src/main.cpp
     src/ui/VideoPopup.cpp
-    src/stb_impl.cpp
-    src/video/source_wmf.cpp      # solo Windows (Media Foundation); en las demas plataformas queda vacio
+    ${VIDEO_SOURCES}
 )
 
 if (NOT DEFINED ENV{GEODE_SDK})
@@ -25,16 +35,19 @@ else()
     message(STATUS "Found Geode: $ENV{GEODE_SDK}")
 endif()
 
-# stb_image y el lector de Media Foundation van sin cabeceras precompiladas (no deben ver Geode.hpp ni sus macros)
-set_source_files_properties(src/stb_impl.cpp src/video/source_wmf.cpp PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+# Los archivos del decodificador incluyen cabeceras del sistema (windows.h, NDK, Foundation): sin las cabeceras precompiladas de Geode
+set_source_files_properties(${VIDEO_SOURCES} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 
 add_subdirectory($ENV{GEODE_SDK} ${CMAKE_CURRENT_BINARY_DIR}/geode)
 
-target_include_directories(${PROJECT_NAME} PRIVATE include src src/engine src/video)
-target_compile_definitions(${PROJECT_NAME} PRIVATE VX_WITH_STB=1)
+target_include_directories(${PROJECT_NAME} PRIVATE src src/engine src/video)
 
 if (WIN32)
     target_link_libraries(${PROJECT_NAME} mfplat mfreadwrite mfuuid ole32)
+elseif (ANDROID)
+    target_link_libraries(${PROJECT_NAME} mediandk)
+elseif (APPLE)
+    target_link_libraries(${PROJECT_NAME} "-framework AVFoundation" "-framework CoreMedia" "-framework CoreVideo" "-framework Foundation")
 endif()
 
 setup_geode_mod(${PROJECT_NAME})

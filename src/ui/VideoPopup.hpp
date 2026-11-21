@@ -1,125 +1,149 @@
 #pragma once
 #include <Geode/Geode.hpp>
 #include <atomic>
-#include <filesystem>
+#include <chrono>
 #include <memory>
 #include <string>
 #include <vector>
 
-#include "director.hpp"
-#include "source.hpp"
+#include "engine.hpp"
+#include "gdexport.hpp"
+#include "videoanim.hpp"
+#include "videoplan.hpp"
+#include "videosource.hpp"
 
 using namespace geode::prelude;
 
-// Ventana del importador de VIDEO (440x300):
-//   izquierda: vista previa del frame central pintado con el metodo elegido + estado
-//   derecha: metodo (8), presupuesto de objetos, duracion, checks 12 fps / 30 fps, gris, canales
+// Ventana del importador de video (430x290):
+//   izquierda: vista previa del primer frame convertido + estado
+//   derecha: metodo, objetos totales, lado largo, inicio y duracion; checks 12/30 fps, Toggle/Spawn y grises
 class VideoPopup : public geode::Popup {
 public:
     static VideoPopup* create(EditorUI* editor);
     ~VideoPopup();
 
 protected:
-    // Lectura del video (ffmpeg / Media Foundation / GIF / carpeta) en un hilo aparte
-    struct LoadJob {
-        vx::DecodeRequest req;
-        vx::Progress prog;
-        vx::Clip clip;
-        int shots = 0;
-        std::string error;
-        int id = 0;
-        std::atomic<bool> done{false};
-    };
-    // Vista previa (un frame) en un hilo aparte
+    // Vista previa: decodifica UN frame del instante de inicio y lo convierte con el presupuesto medio por frame
     struct PreviewJob {
-        std::shared_ptr<const vx::Clip> clip;
-        vx::Params params;
-        vx::Result result;
+        gdx::Progress prog;
         int id = 0;
+        std::string path;
+        vid::Info info;
+        double start = 0;
+        int fps = 12, storeLong = 480;
+        std::string ffmpegPath;
+        bool allowFfmpeg = true;
+        gdx::Method method = gdx::Method::BSP;
+        gdx::Options opt;
+        gdx::Result result;
+        std::string error, backend;
         std::atomic<bool> done{false};
     };
-    // Codificacion completa (al pulsar Colocar)
+    // Conversion completa (al pulsar Colocar): decodificar -> estabilizar -> planificar -> convertir
     struct BuildJob {
-        std::shared_ptr<const vx::Clip> clip;
-        vx::Params params;
-        bool test = false;
-        int fps = 30;
-        vx::Progress prog;
-        vx::Output out;
+        gdx::Progress prog;                          // fase 2 (convertir)
+        std::atomic<float> decodeProg{0.f};          // fase 1 (decodificar)
+        std::atomic<int> phase{0};                   // 0 decodificando, 1 convirtiendo
+        std::string path;
+        vid::Info info;
+        vid::SampleSpec spec;
+        gdx::VideoPlanOptions po;
+        gdx::Method method = gdx::Method::BSP;
+        gdx::Options opt;
+        int threads = 2;
+        int fps = 12;
+        std::atomic<bool> cancelDecode{false};
+        gdx::VideoPlan plan;
+        std::vector<gdx::Result> results;
+        std::string error, backend;
+        int srcW = 0, srcH = 0;
         std::atomic<bool> done{false};
     };
 
     bool init(EditorUI* editor);
 
     void onPick(CCObject*);
-    void onPickFolder(CCObject*);
     void onPlace(CCObject*);
-    void onTest(CCObject*);
     void onInfo(CCObject*);
     void onSettings(CCObject*);
     void onPrev(CCObject*) { stepMethod(-1); }
     void onNext(CCObject*) { stepMethod(+1); }
-    void onBudgetSlider(CCObject* sender);
-    void onSecondsSlider(CCObject* sender);
-    void on12(CCObject*);
-    void on30(CCObject*);
-    void syncFpsChecks(float = 0.f);
+    void onTotalSlider(CCObject* sender);
+    void onSizeSlider(CCObject* sender);
+    void onStartSlider(CCObject* sender);
+    void onLenSlider(CCObject* sender);
+    void onFps12(CCObject*) { setFps(12); }
+    void onFps30(CCObject*) { setFps(30); }
+    void onModeToggle(CCObject*) { setMode(gdx::PlayMode::Toggle); }
+    void onModeSpawn(CCObject*) { setMode(gdx::PlayMode::Spawn); }
     void onGray(CCObject*);
-    void onChan(CCObject*);
 
+    void setFps(int fps);
+    void setMode(gdx::PlayMode m);
+    void syncChecks(float = 0.f);                    // los toggles cambian DESPUES del callback: se fuerzan al estado real (casillas excluyentes)
     void stepMethod(int dir);
+    void loadVideo(std::string const& path);
+    void clampClip();                                // acota inicio / duracion al video y al presupuesto
+    void syncSliders();
     void refreshLabels();
-    void load(std::filesystem::path const& path);
-    void scheduleReload();
-    void reload(float = 0.f);
-    void schedulePreview();
-    void recomputePreview(float = 0.f);
+    void scheduleRecompute();
+    void recompute(float = 0.f);
     void tick(float);
     void applyPreview(std::shared_ptr<PreviewJob> job);
+    void buildPreview();
     void finishBuild(std::shared_ptr<BuildJob> job);
-    void buildPreviewSprite();
     void setStatus(std::string const& a, std::string const& b = "", std::string const& note = "");
 
-    vx::Params makeParams(int fps) const;
-    int fps() const { return m_fps30 ? 30 : 12; }
-    int editorLimit() const;
+    gdx::Method method() const;
+    gdx::Options makeOptions(int budget) const;
+    gdx::GdExportOptions makeExportOptions() const;
+    gdx::VideoPlanOptions makePlanOptions() const;
+    int storeLong(int frames) const;                 // lado largo con el que se guardan los frames (baja solo si hay muchos)
+    int framesNow() const;
+    int maxTotal() const;                            // tope efectivo: ajuste/deslizador y lo que cabe en el editor
     int editorRoom() const;
-    void startPlacement(std::vector<std::string> chunks, size_t objectCount, std::string const& doneMsg);
-    CCPoint viewCenter() const;
+    double maxLengthFit() const;                     // segundos que caben en el presupuesto con el minimo por frame
+    int perFrameEstimate() const;
+    void startPlacement(std::string const& chain, size_t objectCount, std::string const& doneMsg);
+    CCPoint placementOrigin() const;
     int maxUsedGroup() const;
-    std::vector<int> freeChannels() const;
 
     EditorUI* m_editor = nullptr;
-    std::filesystem::path m_path;
-    std::shared_ptr<LoadJob> m_load;
-    std::shared_ptr<PreviewJob> m_prev;
+    std::string m_path;
+    vid::Info m_info;
+    bool m_haveVideo = false;
+    std::shared_ptr<PreviewJob> m_job;
     std::shared_ptr<BuildJob> m_build;
-    std::shared_ptr<const vx::Clip> m_clip;
-    int m_shots = 0;
     int m_jobCounter = 0;
-    vx::Result m_result;
+    gdx::Result m_result;
     bool m_hasResult = false;
 
-    int m_method = int(vx::Coder::Auto);   // 0..7 (el 8 = director automatico)
-    int m_budget = 300000;                 // objetos totales
-    int m_seconds = 10;                    // segundos de video a convertir
-    bool m_fps30 = true;                   // check 30 fps (excluyente con 12 fps)
+    int m_method = 0;                      // indice en la lista de metodos de la ventana (0 = BSP)
+    int m_total = 450000;                  // objetos totales
+    int m_sizeU = 600;                     // lado largo, unidades GD
+    double m_start = 0;                    // s
+    double m_length = 5;                   // s
+    int m_fps = 12;                        // 12 o 30
+    gdx::PlayMode m_mode = gdx::PlayMode::Toggle;
     bool m_gray = false;
-    bool m_chan = false;
 
-    CCNode* m_previewHolder = nullptr;
-    CCSprite* m_preview = nullptr;
+    CCLabelBMFont* m_methodLabel = nullptr;
+    CCLabelBMFont* m_descLabel = nullptr;
+    CCLabelBMFont* m_val[4] = {nullptr, nullptr, nullptr, nullptr};
+    Slider* m_totalSlider = nullptr;
+    Slider* m_sizeSlider = nullptr;
+    Slider* m_startSlider = nullptr;
+    Slider* m_lenSlider = nullptr;
+    CCMenuItemToggler* m_chk12 = nullptr;
+    CCMenuItemToggler* m_chk30 = nullptr;
+    CCMenuItemToggler* m_chkToggle = nullptr;
+    CCMenuItemToggler* m_chkSpawn = nullptr;
+    CCMenuItemToggler* m_chkGray = nullptr;
     CCLabelBMFont* m_statA = nullptr;
     CCLabelBMFont* m_statB = nullptr;
     CCLabelBMFont* m_noteLabel = nullptr;
-    CCLabelBMFont* m_methodLabel = nullptr;
-    CCLabelBMFont* m_descLabel = nullptr;
-    CCLabelBMFont* m_budgetValue = nullptr;
-    CCLabelBMFont* m_secondsValue = nullptr;
-    Slider* m_budgetSlider = nullptr;
-    Slider* m_secondsSlider = nullptr;
-    CCMenuItemToggler* m_chk12 = nullptr;
-    CCMenuItemToggler* m_chk30 = nullptr;
-    CCMenuItemToggler* m_chkGray = nullptr;
-    CCMenuItemToggler* m_chkChan = nullptr;
+    CCNode* m_previewHolder = nullptr;
+    CCSprite* m_preview = nullptr;
+    std::string m_lastDesc;
+    std::string m_loadNote;                // aviso del archivo (codec raro...)
 };

@@ -1,12 +1,11 @@
 # Video Importer (beta)
 
-Convierte un **MP4** (o GIF / carpeta de imagenes) en una animacion de Geometry Dash que se reproduce en bucle dentro del editor, a **12 o 30 fps**, con hasta **400-500 mil objetos** y **sin lag**.
+Convierte un **MP4** en una animacion del editor de Geometry Dash. Cada frame se convierte en objetos y se reproduce con **Toggle triggers + Spawn triggers** (nada mas: ni Color, ni Alpha, ni Pulse), en **bucle infinito**.
 
-- **8 metodos de animacion** nuevos y originales (cinta de camara, mosaico vivo, mosaico + detalle, epocas de parches, panoramica + residuo, fundido cruzado, mosaico de pulsos y un director automatico que elige el mejor por escena).
-- Marca **12 fps** o **30 fps** y el video se procesa a esa tasa.
-- El presupuesto de objetos (formas + triggers) **nunca se supera**.
-- Boton nuevo en la barra *Edit* del editor.
+- **12 fps o 30 fps** (dos casillas): a que ritmo se muestrea el video.
+- **Toggle (exacto) o Spawn (ligero)**: dos formas de encadenar los frames.
+- **Presupuesto de objetos** de hasta **500.000** para TODA la animacion (frames + triggers), repartido segun el detalle de cada frame; los frames casi iguales se reutilizan.
+- Los frames ocultos quedan **desactivados** (Toggle): GD ni los dibuja ni los procesa.
+- Decodifica con el sistema (Windows: Media Foundation, Android: MediaCodec, macOS/iOS: AVFoundation); en PC, ffmpeg como respaldo.
 
-Pulsa **Prueba** la primera vez: coloca 7 escenas de 1 s para comprobar en tu GD que todos los triggers funcionan.
-
-> Windows lee MP4 sin instalar nada. macOS/Linux necesitan ffmpeg. En Android/iOS usa GIF o una carpeta de imagenes.
+En el editor los frames se ven superpuestos: **juega el nivel** para ver el video. Guarda antes de importar (no se puede deshacer). Con 400-500k objetos hace falta un editor **sin limite de objetos**.
