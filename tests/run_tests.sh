@@ -10,10 +10,12 @@ cd "$(dirname "$0")"
 W=$(mktemp -d); S=../src; CXX="g++ -std=c++23 -O2 -pthread -I$S -I$S/engine -I$S/video -I."
 echo "== videos de prueba"; ffmpeg -v error -y -f lavfi -i testsrc2=size=640x360:rate=30 -t 4 -c:v libx264 -pix_fmt yuv420p $W/a.mp4
 ffmpeg -v error -y -f lavfi -t 1.5 -i testsrc2=size=640x360:rate=30 -vf tpad=stop_mode=clone:stop_duration=2.5 -c:v libx264 -pix_fmt yuv420p $W/frozen.mp4
-echo "== probe";  $CXX probe_test.cpp -o $W/probe && $W/probe $W/a.mp4
+ffmpeg -v error -y -f lavfi -i testsrc2=size=640x360:rate=30 -t 5 -c:v libx264 -pix_fmt yuv420p -movflags frag_keyframe+empty_moov $W/frag.mp4
+echo "== probe";  $CXX probe_test.cpp -o $W/probe && $W/probe $W/a.mp4 && $W/probe $W/frag.mp4
 echo "== sample"; $CXX sample_test.cpp $S/video/decode_stub.cpp $S/video/decode_ffmpeg_cli.cpp -o $W/sample && $W/sample $W/a.mp4 12 && $W/sample $W/a.mp4 30 1 2
 echo "== e2e";    $CXX e2e_test.cpp $S/video/decode_stub.cpp $S/video/decode_ffmpeg_cli.cpp -o $W/e2e
 for m in 0 1; do $W/e2e $W/a.mp4 12 $m 40000 2 | grep -E "^N=|variante"; done
+echo "-- modo Canales (paleta de 128 colores):"; for m in 0 1; do CHAN=128 $W/e2e $W/a.mp4 12 $m 40000 2 | grep -E "^N=|variante 0"; done
 echo "-- con frames repetidos (deben detectarse):"; $W/e2e $W/frozen.mp4 30 0 450000 2 | grep -E "^N="
 echo "== yuv android"; g++ -std=c++20 -O1 -Indkmock -I$S -I$S/video -Wl,--unresolved-symbols=ignore-all yuv_android_test.cpp -o $W/yuv
 ffmpeg -v error -y -f lavfi -i color=c=0x3080C0:s=64x48:r=1 -frames:v 1 -vf "scale=out_color_matrix=bt709:out_range=tv,format=nv12" -f rawvideo $W/nv12.raw

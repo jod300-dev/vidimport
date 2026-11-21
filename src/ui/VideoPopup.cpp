@@ -16,6 +16,8 @@ namespace {
     constexpr int kEditorObjectMargin = 3000;                       // colchon para lo que el nivel ya tenga o lo que GD anada
     constexpr int kMinSize = 150, kMaxSize = 6000;
     constexpr int kAbsMinTotal = 10000;
+    constexpr int kHardMinPerFrame = 40;                            // suelo ABSOLUTO del deslizador de duracion (calidad muy baja, pero cabe)
+    constexpr int kMaxGroup = 9999;
 
     // Metodos que ofrece la ventana (los de "imagen" del motor: el video los aplica frame a frame). El primero es el recomendado.
     constexpr gdx::Method kMethods[] = {
@@ -68,6 +70,8 @@ namespace {
         return std::clamp(int(std::lround(u / step)) * step, kMinSize, kMaxSize);
     }
     float rangeToSlider(double v, double lo, double hi) { return hi > lo ? std::clamp(float((v - lo) / (hi - lo)), 0.f, 1.f) : 0.f; }
+    // paso del deslizador de duracion: fino en rangos cortos, grueso en los largos (si no, arrastrar 5 minutos seria imposible)
+    double lenStep(double range) { return range > 300 ? 1.0 : range > 100 ? 0.5 : range > 30 ? 0.25 : 0.05; }
     double sliderToRange(float s, double lo, double hi, double step) {
         const double u = lo + double(std::clamp(s, 0.f, 1.f)) * (hi - lo);
         return std::clamp(std::round(u / step) * step, lo, std::max(lo, hi));
@@ -209,6 +213,8 @@ bool VideoPopup::init(EditorUI* editor) {
     m_fps = mod->getSavedValue<int>("fps", 12) == 30 ? 30 : 12;
     m_mode = mod->getSavedValue<int>("mode", 0) == 1 ? gdx::PlayMode::Spawn : gdx::PlayMode::Toggle;
     m_gray = mod->getSavedValue<bool>("gray", false);
+    m_chan = mod->getSavedValue<bool>("chan", false);
+    m_groupBase = std::max(this->maxUsedGroup() + 1, std::clamp(int(mod->getSettingValue<int>("first-group")), 1, 9000));
 
     auto put = [&](CCNode* n, float x, float y) { m_mainLayer->addChildAtPosition(n, Anchor::TopLeft, ccp(x, -y)); };
     auto putBtn = [&](CCNode* n, float x, float y) { m_buttonMenu->addChildAtPosition(n, Anchor::TopLeft, ccp(x, -y)); };
@@ -280,11 +286,13 @@ bool VideoPopup::init(EditorUI* editor) {
         l->limitLabelWidth(maxW, 0.28f, 0.15f);
     };
     m_chk12 = chk(menu_selector(VideoPopup::onFps12), m_fps == 12, 174.f, wlay::kChkRowA);
-    chkLabel("12 fps", 186.f, wlay::kChkRowA, 44.f);
-    m_chk30 = chk(menu_selector(VideoPopup::onFps30), m_fps == 30, 238.f, wlay::kChkRowA);
-    chkLabel("30 fps", 250.f, wlay::kChkRowA, 44.f);
-    m_chkGray = chk(menu_selector(VideoPopup::onGray), m_gray, 304.f, wlay::kChkRowA);
-    chkLabel("Escala de grises", 316.f, wlay::kChkRowA, 100.f);
+    chkLabel("12 fps", 186.f, wlay::kChkRowA, 42.f);
+    m_chk30 = chk(menu_selector(VideoPopup::onFps30), m_fps == 30, 234.f, wlay::kChkRowA);
+    chkLabel("30 fps", 246.f, wlay::kChkRowA, 42.f);
+    m_chkGray = chk(menu_selector(VideoPopup::onGray), m_gray, 292.f, wlay::kChkRowA);
+    chkLabel("Grises", 304.f, wlay::kChkRowA, 40.f);
+    m_chkChan = chk(menu_selector(VideoPopup::onChan), m_chan, 348.f, wlay::kChkRowA);
+    chkLabel("Canales", 360.f, wlay::kChkRowA, 56.f);
     m_chkToggle = chk(menu_selector(VideoPopup::onModeToggle), m_mode == gdx::PlayMode::Toggle, 174.f, wlay::kChkRowB);
     chkLabel("Toggle (exacto)", 186.f, wlay::kChkRowB, 104.f);
     m_chkSpawn = chk(menu_selector(VideoPopup::onModeSpawn), m_mode == gdx::PlayMode::Spawn, 300.f, wlay::kChkRowB);
@@ -328,17 +336,34 @@ int VideoPopup::editorRoom() const {
     return std::max(0, lim - kEditorObjectMargin - cur);
 }
 
+int VideoPopup::paletteSize() const {
+    return m_chan ? std::clamp(int(Mod::get()->getSettingValue<int>("palette-size")), 8, gdx::kVideoMaxPalette) : 0;
+}
+
 int VideoPopup::maxTotal() const { return std::clamp(std::min(m_total, editorRoom()), 500, 500000); }
 
+// Frames que caben con `perFrame` objetos cada uno (6 = cota de triggers por frame) y sin pasarse de los 9999 grupos de GD
+// (hacen falta ~2 por frame: uno para sus objetos y otro para su paso de triggers).
+static int framesThatFit(int total, int palette, int perFrame, int groupBase) {
+    const int byObjects = std::max(1, (total - 16 - palette) / (perFrame + 6));
+    const int byGroups = std::max(1, (kMaxGroup - groupBase - 4) / 2);
+    return std::min(byObjects, byGroups);
+}
+
+// Duracion MAXIMA del deslizador (suelo absoluto de 40 obj/frame): se puede llegar lejos, aunque con calidad baja.
 double VideoPopup::maxLengthFit() const {
+    return double(framesThatFit(maxTotal(), paletteSize(), kHardMinPerFrame, m_groupBase)) / double(m_fps);
+}
+
+// Duracion RECOMENDADA (con el minimo por frame de Ajustes): la que se propone al abrir un video.
+double VideoPopup::softLengthFit() const {
     const int minPer = std::clamp(int(Mod::get()->getSettingValue<int>("min-per-frame")), 30, 3000);
-    const int fit = std::max(1, (maxTotal() - 16) / (minPer + 6));        // 6 = cota de triggers por frame
-    return double(fit) / double(m_fps);
+    return double(framesThatFit(maxTotal(), paletteSize(), minPer, m_groupBase)) / double(m_fps);
 }
 
 int VideoPopup::perFrameEstimate() const {
     const int n = std::max(1, framesNow());
-    return std::max(0, int((long(maxTotal()) - gdx::videoTriggerBound(n, n)) / n));
+    return std::max(0, int((long(maxTotal()) - gdx::videoTriggerBound(n, n) - paletteSize()) / n));
 }
 
 int VideoPopup::storeLong(int frames) const {
@@ -393,7 +418,7 @@ void VideoPopup::refreshLabels() {
         m_val[2]->setString(buf);
         const int n = framesNow();
         const double fit = maxLengthFit();
-        if (m_length >= fit - 1e-6 && fit < m_info.duration - m_start - 1e-6) std::snprintf(buf, sizeof buf, "%.2f s (%d fr, max)", m_length, n);
+        if (m_length >= fit - 1e-6 && fit < m_info.duration - m_start - 1e-6) std::snprintf(buf, sizeof buf, "%.1f s (%d fr, max)", m_length, n);
         else std::snprintf(buf, sizeof buf, "%.2f s (%d frames)", m_length, n);
         m_val[3]->setString(buf);
     } else {
@@ -409,6 +434,7 @@ void VideoPopup::refreshLabels() {
     mod->setSavedValue<int>("fps", m_fps);
     mod->setSavedValue<int>("mode", int(m_mode));
     mod->setSavedValue<bool>("gray", m_gray);
+    mod->setSavedValue<bool>("chan", m_chan);
 }
 
 void VideoPopup::setStatus(std::string const& a, std::string const& b, std::string const& note) {
@@ -455,7 +481,7 @@ void VideoPopup::onStartSlider(CCObject* sender) {
 void VideoPopup::onLenSlider(CCObject* sender) {
     if (!m_haveVideo) return;
     const double maxLen = std::max(0.5, std::min(m_info.duration - m_start, maxLengthFit()));
-    m_length = sliderToRange(static_cast<SliderThumb*>(sender)->getValue(), std::min(0.5, maxLen), maxLen, 0.05);
+    m_length = sliderToRange(static_cast<SliderThumb*>(sender)->getValue(), std::min(0.5, maxLen), maxLen, lenStep(maxLen));
     this->clampClip();
     this->refreshLabels();
     if (m_hasResult && !m_build) this->applyPreview(nullptr);
@@ -465,6 +491,16 @@ void VideoPopup::onGray(CCObject*) {
     m_gray = !m_gray;                          // en el callback el toggler aun no ha cambiado su estado
     this->refreshLabels();
     this->scheduleRecompute();
+}
+
+// Check "Canales (sin HSV)": los objetos usan solo canales de color (2..), con UNA paleta global y Color triggers al inicio.
+void VideoPopup::onChan(CCObject*) {
+    m_chan = !m_chan;                          // en el callback el toggler aun no ha cambiado su estado
+    this->scheduleOnce(schedule_selector(VideoPopup::syncChecks), 0.f);
+    this->clampClip();                         // la paleta resta objetos al presupuesto
+    this->syncSliders();
+    this->refreshLabels();
+    if (m_hasResult && !m_build) this->applyPreview(nullptr);
 }
 
 void VideoPopup::setFps(int fps) {
@@ -490,6 +526,7 @@ void VideoPopup::syncChecks(float) {
     m_chkToggle->toggle(m_mode == gdx::PlayMode::Toggle);
     m_chkSpawn->toggle(m_mode == gdx::PlayMode::Spawn);
     m_chkGray->toggle(m_gray);
+    m_chkChan->toggle(m_chan);
 }
 
 void VideoPopup::onSettings(CCObject*) { openSettingsPopup(Mod::get()); }
@@ -535,7 +572,7 @@ void VideoPopup::loadVideo(std::string const& path) {
     else if (m_info.fps > 0 && m_fps == 30 && m_info.fps < 20)
         m_loadNote = "El video va a ~" + std::to_string(int(std::lround(m_info.fps))) + " fps: a 30 fps se repetiran frames (usa 12).";
     m_start = 0;
-    m_length = m_info.duration;
+    m_length = std::min(m_info.duration, std::max(0.5, softLengthFit()));     // por defecto la que se ve bien; el deslizador llega mas lejos
     this->clampClip();
     this->syncSliders();
     this->refreshLabels();
@@ -578,6 +615,7 @@ gdx::VideoPlanOptions VideoPopup::makePlanOptions() const {
     po.dedupePsnr = std::clamp(mod->getSettingValue<double>("dedupe-psnr"), 30.0, 60.0);
     po.adaptive = mod->getSettingValue<bool>("adaptive");
     po.stabilizeTol = std::clamp(int(mod->getSettingValue<int>("stabilize")), 0, 20);
+    po.extraObjects = paletteSize();           // los Color triggers de la paleta cuentan como objetos
     return po;
 }
 
@@ -667,8 +705,9 @@ void VideoPopup::applyPreview(std::shared_ptr<PreviewJob> job) {
     std::snprintf(a, sizeof a, "%d frames | %s", n, baseName(m_path).c_str());
     std::snprintf(b, sizeof b, "~%d obj/frame | %.1f dB", pf, m_result.psnr);
     std::string note = m_loadNote;
-    if (pf < 400) note = "Pocos objetos por frame: baja la duracion o sube el tope. " + note;
-    else if (m_length >= fit - 1e-6 && fit < m_info.duration - m_start - 1e-6) note = "Duracion limitada por el tope de objetos. " + note;
+    const int minPer = std::clamp(int(Mod::get()->getSettingValue<int>("min-per-frame")), 30, 3000);
+    if (pf < minPer) note = "Calidad baja (" + std::to_string(pf) + " obj/frame): acorta la duracion, usa 12 fps o sube el tope. " + note;
+    else if (m_length >= fit - 1e-6 && fit < m_info.duration - m_start - 1e-6) note = "Duracion limitada por el tope de objetos o de grupos. " + note;
     this->setStatus(a, b, note);
 }
 
@@ -797,6 +836,8 @@ void VideoPopup::onPlace(CCObject*) {
     job->path = m_path;
     job->info = m_info;
     job->fps = m_fps;
+    job->chan = m_chan;
+    job->paletteSize = std::max(8, paletteSize() ? paletteSize() : 128);
     job->method = method();
     job->po = makePlanOptions();
     job->opt = makeOptions(1000);
@@ -832,6 +873,7 @@ void VideoPopup::onPlace(CCObject*) {
                 } else {
                     job->phase.store(1);
                     job->results = gdx::convertVideo(clip, job->plan, job->method, job->opt, &job->prog, job->threads);
+                    if (job->chan && !job->prog.cancel.load()) job->palette = gdx::quantizeVideo(job->results, job->paletteSize);   // paleta global del video
                 }
             }
         } catch (std::exception const& e) {
@@ -857,6 +899,7 @@ void VideoPopup::finishBuild(std::shared_ptr<BuildJob> job) {
     p.eo = makeExportOptions();
     p.mode = m_mode;
     p.blockSeconds = std::clamp(mod->getSettingValue<double>("spawn-block"), 0.25, 4.0);
+    if (job->chan) p.palette = job->palette;       // vacia = HSV
     const CCPoint origin = placementOrigin();
     p.eo.originX = origin.x;
     p.eo.originY = origin.y;
@@ -887,9 +930,9 @@ void VideoPopup::finishBuild(std::shared_ptr<BuildJob> job) {
     }
     const auto S = gdx::scheduleVideo(job->plan, p.mode, nullptr, p.blockSeconds);
     char msg[220];
-    std::snprintf(msg, sizeof msg, "Video colocado: %d frames (%d distintos), %zu objetos, grupos %d-%d | %s%s",
+    std::snprintf(msg, sizeof msg, "Video colocado: %d frames (%d distintos), %zu objetos, grupos %d-%d | %s%s%s",
                   job->plan.frames, job->plan.groups(), count, p.baseGroup, p.baseGroup + std::max(0, S.groupsNeeded - 1),
-                  p.mode == gdx::PlayMode::Toggle ? "Toggle" : "Spawn", job->backend.empty() ? "" : (" | " + job->backend).c_str());
+                  p.mode == gdx::PlayMode::Toggle ? "Toggle" : "Spawn", job->chan ? " | canales" : "", job->backend.empty() ? "" : (" | " + job->backend).c_str());
     this->startPlacement(str, count, msg);
     this->onClose(nullptr);
 }
@@ -903,7 +946,7 @@ void VideoPopup::onInfo(CCObject*) {
         "- <cg>Inicio / Duracion</c>: el tramo del video. La duracion maxima sale del tope de objetos (minimo por frame en Ajustes).\n\n"
         "<cy>Toggle (exacto)</c>: un Spawn por paso con su instante absoluto; la animacion no se desincroniza nunca.\n"
         "<cy>Spawn (ligero)</c>: los pasos se encadenan y se resincronizan cada segundo; la mitad de Spawn y sin pico al empezar cada vuelta.\n\n"
-        "Solo se usan <cy>Toggle</c> y <cy>Spawn</c> triggers (nada de Color, Alpha ni Pulse): el color de cada objeto va en HSV. "
+        "La animacion usa solo <cy>Toggle</c> y <cy>Spawn</c> triggers. El color va en <cy>HSV</c> dentro de cada objeto; con <cy>Canales</c> los objetos usan canales de color (2..) con una paleta unica para todo el video, fijada por Color triggers (uno por canal) al inicio del nivel: cadena mas corta, pero con menos colores (ver Ajustes). "
         "Los frames ocultos quedan <cg>desactivados</c> (sin lag). Los 2 triggers de arranque van en x=-30 y la animacion se repite <cg>para siempre</c>.\n\n"
         "En el editor los frames se ven superpuestos: <cy>dale a jugar</c>. Con 400-500k objetos GD tarda en cargar y necesita un editor sin limite de objetos.\n\n"
         "No se puede deshacer: <cr>guarda antes</c>.",

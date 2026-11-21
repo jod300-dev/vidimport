@@ -10,7 +10,7 @@
   "name": "Video Importer",
   "version": "v1.0.0-beta",
   "developer": "Patasma",
-  "description": "Convierte un MP4 en una animacion del editor: cada frame (12 o 30 fps) son objetos y se reproduce con Toggle triggers + Spawn triggers (modo lista exacta o cadena ligera), en bucle infinito, dentro de un presupuesto de 400-500k objetos.",
+  "description": "Convierte un MP4 en una animacion del editor: cada frame (12 o 30 fps) son objetos y se reproduce con Toggle triggers + Spawn triggers (modo lista exacta o cadena ligera), en bucle infinito (color en HSV o en canales), dentro de un presupuesto de 400-500k objetos.",
   "resources": {
     "spritesheets": {
       "VideoBtn": [
@@ -44,8 +44,8 @@
       "default": 200,
       "min": 30,
       "max": 3000,
-      "name": "Objetos minimos por frame",
-      "description": "Por debajo de esto un frame sale irreconocible. Si el tramo no cabe, la ventana acorta la <cy>duracion maxima</c>."
+      "name": "Objetos por frame recomendados",
+      "description": "Objetos por frame que se consideran <cy>buena calidad</c>: con esto se calcula la duracion que se propone al abrir un video y el aviso de calidad baja. El deslizador de <cy>Duracion</c> llega mas lejos (hasta 40 objetos por frame o los 9999 grupos de GD)."
     },
     "spawn-block": {
       "type": "float",
@@ -167,6 +167,14 @@
       "max": 1020,
       "name": "Canal de color",
       "description": "Canal de color de todos los objetos (el color de cada uno va en HSV, sin triggers de color). 1010 = el especial negro."
+    },
+    "palette-size": {
+      "type": "int",
+      "default": 128,
+      "min": 8,
+      "max": 900,
+      "name": "Colores de la paleta (modo Canales)",
+      "description": "Con la casilla <cy>Canales</c> activada, el video usa una paleta UNICA de este numero de colores (canales 2 en adelante, un Color trigger al inicio por canal). Mas colores = menos bandas, pero mas triggers y mas canales ocupados."
     },
     "bleed": {
       "type": "float",

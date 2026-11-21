@@ -15,12 +15,14 @@ int main(int argc, char** argv) {
     std::vector<Image> orig = clip.frames;
     double tDec = nowMs(); printf("decode %.1fs (%zu frames)\n", 0.0, clip.frames.size());
     double t0 = nowMs();
-    VideoPlanOptions po; po.maxTotal = maxTotal;
+    const int CH = getenv("CHAN") ? atoi(getenv("CHAN")) : 0;
+    VideoPlanOptions po; po.maxTotal = maxTotal; po.extraObjects = CH;
     stabilizeFrames(clip.frames, po.stabilizeTol);
     VideoPlan plan = planVideo(clip, po);
     Options o; o.quality = 0; o.lightSpecialChannels = true; o.maxChannels = 0; o.maxRaster = 384;
     auto res = convertVideo(clip, plan, Method(method), o, nullptr, 1);
-    VideoExportParams p; p.baseGroup = 100; p.eo.longSide = 600; p.mode = PlayMode(mode);
+    VideoExportParams p; if (CH) p.palette = quantizeVideo(res, CH);
+    p.baseGroup = 100; p.eo.longSide = 600; p.mode = PlayMode(mode);
     std::string err; std::string chain = buildVideoString(res, plan, p, &err);
     double ms = nowMs() - t0;
     if (chain.empty()) { printf("FAIL %s\n", err.c_str()); return 1; }
@@ -28,8 +30,8 @@ int main(int argc, char** argv) {
     printf("preview PSNR medio (motor) %.1f dB\n", ppsnr);
     auto S = scheduleVideo(plan, p.mode);
     // contar triggers reales en la cadena
-    size_t ntr = 0, nTotal = 0; { size_t pos = 0; while (pos < chain.size()) { size_t e = chain.find(';', pos); if (e == std::string::npos) e = chain.size(); std::string it = chain.substr(pos, e - pos); ++nTotal; if (it.rfind("1,1049,", 0) == 0 || it.rfind("1,1268,", 0) == 0) ++ntr; pos = e + 1; } }
-    printf("N=%d groups=%d dup=%d events=%d budgetSum=%ld obj=%zu trig(real)=%zu trig(calc)=%ld total=%zu build=%.0fms chain=%zuKB mode=%s\n", plan.frames, plan.groups(), plan.dupFrames, plan.events, plan.objectsPlanned, nobj, ntr, S.triggers, nTotal, ms, chain.size()/1024, mode ? "Spawn" : "Toggle");
+    size_t ntr = 0, nTotal = 0; { size_t pos = 0; while (pos < chain.size()) { size_t e = chain.find(';', pos); if (e == std::string::npos) e = chain.size(); std::string it = chain.substr(pos, e - pos); ++nTotal; if (it.rfind("1,1049,", 0) == 0 || it.rfind("1,1268,", 0) == 0 || it.rfind("1,899,", 0) == 0) ++ntr; pos = e + 1; } }
+    printf("N=%d groups=%d dup=%d events=%d budgetSum=%ld obj=%zu trig(real)=%zu trig(calc)=%ld [+%zu paleta] total=%zu build=%.0fms chain=%zuKB mode=%s\n", plan.frames, plan.groups(), plan.dupFrames, plan.events, plan.objectsPlanned, nobj, ntr, S.triggers, p.palette.size(), nTotal, ms, chain.size()/1024, mode ? "Spawn" : "Toggle");
     if (getenv("NOSIM")) return 0;
     // simulacion
     const double ppu = 0.6; double asp = double(orig[0].w) / orig[0].h; double sw = asp >= 1 ? 600 : 600 * asp, sh = asp >= 1 ? 600 / asp : 600;

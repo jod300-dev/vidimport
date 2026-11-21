@@ -29,6 +29,7 @@
 #include <vector>
 #include "gdexport.hpp"
 #include "videoplan.hpp"
+#include "videochan.hpp"
 
 namespace gdx {
 
@@ -56,6 +57,9 @@ struct VideoExportParams {
     int objectIdSpawn = 1268;
     int gridCols = 80;                // los triggers van en una rejilla compacta (paso 30 u): ninguno comparte celda con otro
     double blockSeconds = 1.0;        // modo Spawn: longitud de cada cadena entre resincronizaciones
+    // Colores en CANALES (sin HSV): paleta global ya aplicada a los Result con quantizeVideo (r.colored = true). Vacia = HSV.
+    std::vector<std::array<uint8_t, 3>> palette;
+    int firstChannel = kVideoFirstChannel;
 };
 
 struct VEvent { double t; int group; };
@@ -157,6 +161,7 @@ inline std::string buildVideoString(const std::vector<Result>& results, const Vi
     }
     const VideoSchedule S = scheduleVideo(plan, p.mode, &gsrc, p.blockSeconds);
     const size_t E = S.ev.size();
+    if (!p.palette.empty() && (p.firstChannel < 2 || p.firstChannel + int(p.palette.size()) - 1 > 999)) return fail("No caben los canales de color (2..999)");
     if (S.groupsNeeded > 0 && (p.baseGroup < 1 || p.baseGroup + S.groupsNeeded - 1 > 9999)) return fail("No quedan grupos libres suficientes (max. 9999)");
 
     size_t total = 0;
@@ -169,7 +174,15 @@ inline std::string buildVideoString(const std::vector<Result>& results, const Vi
     if (S.still) {
         const int g = S.ev.empty() ? gsrc[0] : S.ev[0].group;
         GdExportOptions eo = p.eo; eo.groupStr.clear(); eo.monoFastPath = false;
-        out = toGdString(results[size_t(g)], eo);
+        const Result& rs = results[size_t(g)];
+        if (!p.palette.empty()) {
+            const ChannelMap cm = buildChannelMap(rs);
+            eo.channels.assign(cm.colors.size(), 0);
+            for (size_t k = 0; k < cm.colors.size(); ++k)
+                for (size_t j = 0; j < p.palette.size(); ++j) if (p.palette[j] == cm.colors[k]) { eo.channels[k] = p.firstChannel + int(j); break; }
+        }
+        out = toGdString(rs, eo);
+        if (!p.palette.empty()) { out += ';'; appendColorTriggers(out, p.palette, p.firstChannel, p.trigX, p.eo.originY - 30.0); if (out.back() == ';') out.pop_back(); }
         return out;
     }
 
@@ -194,6 +207,15 @@ inline std::string buildVideoString(const std::vector<Result>& results, const Vi
         eo.groupStr = std::to_string(G[size_t(g)]);
         eo.zBase = zb[size_t(g)];
         eo.monoFastPath = false;
+        if (!p.palette.empty()) {                                  // canal de cada color de ESTE grupo = canal global de la paleta
+            const ChannelMap cm = buildChannelMap(r);
+            eo.channels.assign(cm.colors.size(), 0);
+            for (size_t k = 0; k < cm.colors.size(); ++k) {
+                int ch = p.firstChannel;
+                for (size_t j = 0; j < p.palette.size(); ++j) if (p.palette[j] == cm.colors[k]) { ch = p.firstChannel + int(j); break; }
+                eo.channels[k] = ch;
+            }
+        }
         std::string s = toGdString(r, eo);
         if (!s.empty()) { out += s; out += ';'; }
     }
@@ -240,6 +262,7 @@ inline std::string buildVideoString(const std::vector<Result>& results, const Vi
     // arranque (triggers de posicion), apilados a la izquierda
     vdetail::spawn(out, p, p.trigX, bottom, M, 0, 0);
     vdetail::spawn(out, p, p.trigX, bottom + 30.0, I0, 0, 0);
+    if (!p.palette.empty()) appendColorTriggers(out, p.palette, p.firstChannel, p.trigX, bottom);   // colores de los canales (una sola vez, al inicio)
 
     detail::triggersFirst(out, objEnd);
     if (!out.empty() && out.back() == ';') out.pop_back();

@@ -1,6 +1,7 @@
 #pragma once
 #include <Geode/Geode.hpp>
 #include <atomic>
+#include <array>
 #include <chrono>
 #include <memory>
 #include <string>
@@ -52,6 +53,9 @@ protected:
         gdx::Options opt;
         int threads = 2;
         int fps = 12;
+        bool chan = false;                           // colores en canales (sin HSV)
+        int paletteSize = 128;
+        std::vector<std::array<uint8_t, 3>> palette;
         std::atomic<bool> cancelDecode{false};
         gdx::VideoPlan plan;
         std::vector<gdx::Result> results;
@@ -77,6 +81,7 @@ protected:
     void onModeToggle(CCObject*) { setMode(gdx::PlayMode::Toggle); }
     void onModeSpawn(CCObject*) { setMode(gdx::PlayMode::Spawn); }
     void onGray(CCObject*);
+    void onChan(CCObject*);
 
     void setFps(int fps);
     void setMode(gdx::PlayMode m);
@@ -100,9 +105,11 @@ protected:
     gdx::VideoPlanOptions makePlanOptions() const;
     int storeLong(int frames) const;                 // lado largo con el que se guardan los frames (baja solo si hay muchos)
     int framesNow() const;
+    int paletteSize() const;                         // colores de la paleta global (ajuste); 0 si el check de canales esta apagado
     int maxTotal() const;                            // tope efectivo: ajuste/deslizador y lo que cabe en el editor
     int editorRoom() const;
-    double maxLengthFit() const;                     // segundos que caben en el presupuesto con el minimo por frame
+    double maxLengthFit() const;                     // duracion MAXIMA del deslizador (suelo absoluto de objetos por frame y limite de grupos)
+    double softLengthFit() const;                    // duracion RECOMENDADA (minimo por frame de Ajustes)
     int perFrameEstimate() const;
     void startPlacement(std::string const& chain, size_t objectCount, std::string const& doneMsg);
     CCPoint placementOrigin() const;
@@ -119,6 +126,7 @@ protected:
     bool m_hasResult = false;
 
     int m_method = 0;                      // indice en la lista de metodos de la ventana (0 = BSP)
+    int m_groupBase = 1;                   // primer grupo libre del nivel (para el limite de 9999 grupos)
     int m_total = 450000;                  // objetos totales
     int m_sizeU = 600;                     // lado largo, unidades GD
     double m_start = 0;                    // s
@@ -126,6 +134,7 @@ protected:
     int m_fps = 12;                        // 12 o 30
     gdx::PlayMode m_mode = gdx::PlayMode::Toggle;
     bool m_gray = false;
+    bool m_chan = false;                   // colores en canales (sin HSV) en vez de HSV
 
     CCLabelBMFont* m_methodLabel = nullptr;
     CCLabelBMFont* m_descLabel = nullptr;
@@ -139,6 +148,7 @@ protected:
     CCMenuItemToggler* m_chkToggle = nullptr;
     CCMenuItemToggler* m_chkSpawn = nullptr;
     CCMenuItemToggler* m_chkGray = nullptr;
+    CCMenuItemToggler* m_chkChan = nullptr;
     CCLabelBMFont* m_statA = nullptr;
     CCLabelBMFont* m_statB = nullptr;
     CCLabelBMFont* m_noteLabel = nullptr;

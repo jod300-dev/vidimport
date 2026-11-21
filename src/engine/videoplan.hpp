@@ -36,6 +36,7 @@ struct VideoPlanOptions {
     bool adaptive = true;
     double adaptiveSpread = 2.5;    // un grupo recibe entre 1/spread y spread veces la media
     int stabilizeTol = 5;           // 0 = sin estabilizar; dif. maxima (0-255) que se considera ruido
+    int extraObjects = 0;           // objetos fijos ajenos a los frames (los Color triggers de la paleta en modo canales)
 };
 
 struct VideoPlan {
@@ -128,7 +129,7 @@ inline VideoPlan planVideo(const VideoClip& clip, const VideoPlanOptions& o) {
     p.triggerEstimate = U <= 1 ? 0 : videoTriggerBound(p.events, U);
 
     // --- presupuesto
-    const long room = std::max(0L, long(o.maxTotal) - p.triggerEstimate);
+    const long room = std::max(0L, long(o.maxTotal) - p.triggerEstimate - long(o.extraObjects));
     p.avgPerGroup = double(room) / double(std::max(1, U));
     p.maxFramesFit = int(std::min<long>(N, std::max(1L, room / std::max(1, o.minPerFrame))));
     p.fits = p.avgPerGroup >= o.minPerFrame;

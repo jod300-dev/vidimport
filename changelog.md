@@ -1,4 +1,9 @@
 # v1.0.0-beta
+- Casilla **Canales** (sin HSV): paleta unica para todo el video + Color triggers al inicio.
+- Los MP4 **fragmentados** ya se leen (antes: "No se pudo leer la duracion del video").
+- El deslizador de **Duracion** llega mucho mas lejos (40 obj/frame o 9999 grupos) con paso adaptativo; al abrir se propone la duracion con buena calidad y se avisa de calidad baja.
+- Icono y logo propios (ya no son los del GIF Importer).
+- Casilla **Canales (sin HSV)**: paleta global del video (8-900 colores) en canales 2.., fijada por Color triggers al inicio; la paleta cuenta en el presupuesto.
 - Primera version. Motor de conversion reciclado de GIF Importer / Image Exporter (BSP, hibrido, quadtree, piramide, regiones, franjas, rotados, cuadricula + exportador de objetos y colocacion por tandas).
 - Decodificacion de MP4/MOV/M4V: Media Foundation (Windows), AMediaCodec (Android), AVFoundation (macOS/iOS) y ffmpeg como respaldo en PC.
 - Muestreo a 12 o 30 fps (frame mas cercano en el tiempo), rotacion de moviles en vertical.
