@@ -12,6 +12,7 @@
 //  Cada linea se escribe y se cierra al momento: si GD se cierra de golpe, lo anterior queda guardado.
 // ============================================================================
 #include <Geode/Geode.hpp>
+#include <Geode/modify/CCDirector.hpp>
 #include <Geode/modify/EditorPauseLayer.hpp>
 #include <Geode/modify/LevelInfoLayer.hpp>
 #include <Geode/modify/PlayLayer.hpp>
@@ -119,9 +120,28 @@ namespace {
         long spikesLogged = 0;
         void reset() { sum = worst = 0; n = over33 = over50 = over100 = 0; }
     } g_fs;
-    std::chrono::steady_clock::time_point g_initStart;
+    std::chrono::steady_clock::time_point g_initStart, g_setupDone;
+    long g_updatesAfterSetup = 0;                                // PlayLayer::update recibidos tras setupHasCompleted (para saber si el juego llego a correr)
     double msSince(std::chrono::steady_clock::time_point t) {
         return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t).count();
+    }
+    // Nombre legible de lo que contiene una escena (la de transicion lleva dentro la de salida y la de entrada).
+    std::string sceneName(CCNode* scene, int depth = 0) {
+        if (!scene) return "(null)";
+        auto kids = scene->getChildren();
+        if (!kids) return "(escena vacia)";
+        std::string out;
+        for (auto* c : CCArrayExt<CCNode*>(kids)) {
+            if (!c) continue;
+            if (!out.empty()) out += " + ";
+            if (typeinfo_cast<PlayLayer*>(c)) out += "PlayLayer";
+            else if (typeinfo_cast<LevelEditorLayer*>(c)) out += "LevelEditorLayer (editor)";
+            else if (typeinfo_cast<EditLevelLayer*>(c)) out += "EditLevelLayer (pantalla de editar nombre)";
+            else if (typeinfo_cast<LevelInfoLayer*>(c)) out += "LevelInfoLayer (pagina del nivel)";
+            else if (typeinfo_cast<CCScene*>(c) && depth < 2) out += "[" + sceneName(c, depth + 1) + "]";
+            else out += "otra capa";
+        }
+        return out.empty() ? "(escena vacia)" : out;
     }
     void flushStats(char const* why) {
         if (g_fs.n == 0) return;
@@ -167,10 +187,17 @@ class $modify(PlayLogPlayLayer, PlayLayer) {
         o << "PlayLayer::setupHasCompleted | el nivel CARGO entero (" << msSince(g_initStart) << " ms desde init)";
         append(o.str());
         g_playing = true; g_fs.reset(); g_fs.spikesLogged = 0; g_playStart = std::chrono::steady_clock::now();
+        g_setupDone = g_playStart; g_updatesAfterSetup = 0;
     }
 
     void update(float dt) {
         PlayLayer::update(dt);
+        if (g_playing && enabled() && g_updatesAfterSetup < 5) {  // los primeros fotogramas SIEMPRE al log (el primero suele traer los ~19 s de la carga)
+            ++g_updatesAfterSetup;
+            std::ostringstream o;
+            o << "  primer fotograma #" << g_updatesAfterSetup << " tras cargar: dt = " << (dt * 1000.0) << " ms (a los " << msSince(g_setupDone) << " ms de setupHasCompleted)";
+            append(o.str());
+        }
         if (!g_playing || !enabled() || dt <= 0.f) return;
         g_fs.sum += dt; ++g_fs.n; g_fs.worst = std::max<double>(g_fs.worst, dt);
         if (dt > 0.033f) ++g_fs.over33;
@@ -225,5 +252,20 @@ class $modify(PlayLogEditorPause, EditorPauseLayer) {
     void onSaveAndPlay(CCObject* sender) {
         if (enabled()) append("EditorPauseLayer::onSaveAndPlay (Guardar y jugar) | " + editorStats() + " | " + lastPlacement());
         EditorPauseLayer::onSaveAndPlay(sender);
+    }
+};
+
+// Cambios de escena: dice A DONDE va GD y CUANDO respecto a la carga. Es lo unico que ve TODAS las salidas (editar nombre, pagina del nivel,
+// editor), incluso las que no pasan por PlayLayer::onQuit ni por LevelInfoLayer::init.
+class $modify(PlayLogDirector, CCDirector) {
+    void willSwitchToScene(CCScene* scene) {
+        if (enabled() && (g_pendingLoad || g_playing)) {
+            std::ostringstream o;
+            o << "ESCENA -> " << sceneName(scene);
+            if (g_playing) o << " | " << msSince(g_setupDone) << " ms despues de setupHasCompleted, " << g_updatesAfterSetup << " fotogramas de juego recibidos";
+            else o << " | " << msSince(g_initStart) << " ms despues de empezar PlayLayer::init (aun sin terminar de cargar)";
+            append(o.str());
+        }
+        CCDirector::willSwitchToScene(scene);
     }
 };

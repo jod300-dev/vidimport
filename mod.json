@@ -8,7 +8,7 @@
   },
   "id": "patasma.video_importer",
   "name": "Video Importer",
-  "version": "v1.0.0-beta",
+  "version": "v1.0.1-beta",
   "developer": "Patasma",
   "description": "Convierte un MP4 en una animacion del editor: cada frame (12 o 30 fps) son objetos y se reproduce con Toggle triggers + Spawn triggers (modo lista exacta o cadena ligera), en bucle infinito, con partes anti-lag opcionales (color en HSV o en canales), dentro de un presupuesto de 400-500k objetos.",
   "resources": {

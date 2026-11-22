@@ -28,7 +28,9 @@ using SEL_SCHEDULE = void (CCObject::*)(float);
 enum class Anchor { TopLeft, Bottom };
 enum CCTextAlignment { kCCTextAlignmentCenter };
 enum CCTexture2DPixelFormat { kCCTexture2DPixelFormat_RGBA8888 };
+struct CCArray;
 struct CCNode : CCObject {
+    CCArray* getChildren() { return nullptr; }
     static CCNode* create() { return new CCNode(); }
     void setContentSize(CCSize) {} CCSize getContentSize() const { return {10, 10}; }
     void setAnchorPoint(CCPoint) {} void setPosition(CCPoint) {} void setScale(float) {} void setScaleX(float) {} void setScaleY(float) {}
@@ -73,8 +75,9 @@ struct LevelEditorLayer : CCNode {
     CCArray* m_objects = nullptr; CCNode* m_objectLayer = nullptr;
     CCArray* createObjectsFromString(const char*, bool, bool) { return nullptr; }
 };
+struct CCScene : CCNode {};
 struct CCDirector { static CCDirector* sharedDirector() { static CCDirector d; return &d; } static CCDirector* get() { return sharedDirector(); }
-    CCNode* getRunningScene() { return nullptr; } CCSize getWinSize() { return {}; } };
+    CCNode* getRunningScene() { return nullptr; } void willSwitchToScene(CCScene*) {} CCSize getWinSize() { return {}; } };
 inline CCPoint ccpConvert() { return {}; }
 namespace geode {
 struct Popup : CCNode {
@@ -111,5 +114,6 @@ namespace gd { using string = std::string; }
 struct GJGameLevel : CCObject { gd::string m_levelName; gd::string m_levelString; };
 struct PlayLayer : CCNode { bool init(GJGameLevel*, bool, bool) { return true; } void setupHasCompleted() {} void update(float) {} void onQuit() {} void levelComplete() {} };
 struct LevelInfoLayer : CCNode { GJGameLevel* m_level = nullptr; bool init(GJGameLevel*, bool) { return true; } void onPlay(CCObject*) {} };
+struct EditLevelLayer : CCNode {};
 struct EditorPauseLayer : CCNode { void onSaveAndPlay(CCObject*) {} };
 #define $modify(cls, base) cls : public base

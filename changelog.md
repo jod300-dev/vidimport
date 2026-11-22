@@ -1,3 +1,6 @@
+# v1.0.1-beta
+- Diagnostico de "Jugar no entra": el log (`play-log.txt`) ahora anota **cada cambio de escena** mientras se carga o se juega (`ESCENA -> ...`: a que pantalla va GD y cuantos ms despues de cargar), y los **5 primeros fotogramas** tras cargar con su dt. Antes, una salida a la pantalla de editar nombre no dejaba ninguna huella.
+
 # v1.0.0-beta
 - El log al jugar ahora tambien mide el lag dentro del nivel (fps, peor fotograma, picos con su instante) y registra como termina la partida.
 - Ajuste **Guardar log al jugar**: escribe `play-log.txt` (tamano del nivel, objetos, X maxima, resultado de `PlayLayer::init`, final del log de Geode) al pulsar Jugar / Guardar y jugar y si GD vuelve a la pagina del nivel sin cargar.
