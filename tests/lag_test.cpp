@@ -34,7 +34,7 @@ int main(int argc, char** argv) {
         std::string err; chains[lag] = buildVideoString(res, plan, p, &err, &li[lag]);
         if (chains[lag].empty()) { printf("FAIL %s\n", err.c_str()); return 1; }
     }
-    printf("N=%d groups=%d obj=%zu | anti-lag: %s chunks=%d far=%.0f moves=%ld %s\n", plan.frames, plan.groups(), nobj, li[1].active ? "ACTIVO" : "no aplicado", li[1].chunks, li[1].far, li[1].moveTriggers, li[1].note.c_str());
+    printf("N=%d groups=%d obj=%zu | anti-lag: %s chunks=%d far=%.0f moves=%ld %s\n", plan.frames, plan.groups(), nobj, li[1].active ? "ACTIVO" : "no aplicado", li[1].chunks, li[1].farDist, li[1].moveTriggers, li[1].note.c_str());
     for (int lag = 0; lag < 2; ++lag) { size_t n = 1; for (char c : chains[lag]) if (c == ';') ++n; printf("  total de objetos de la cadena %s: %zu (tope %d) %s\n", lag ? "CON partes" : "sin partes", n, maxTotal, n <= size_t(maxTotal) ? "OK" : "SE PASA DEL TOPE"); if (n > size_t(maxTotal)) return 3; }
     if (!li[1].active) return 2;
     const double dt = 1.0 / fps, T = plan.seconds();

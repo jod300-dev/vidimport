@@ -19,7 +19,7 @@ bool decodeNative(const DecodeRequest& rq, const RawSink& sink, std::string& err
         NSError* nsErr = nil;
         AVAssetReader* reader = [AVAssetReader assetReaderWithAsset:asset error:&nsErr];
         if (!reader) { err = std::string("AVFoundation: ") + (nsErr ? [[nsErr localizedDescription] UTF8String] : "no se pudo abrir"); return false; }
-        NSDictionary* settings = @{ (id)kCVPixelBufferPixelFormatTypeKey : @(kCVPixelFormatType_32BGRA) };
+        NSDictionary* settings = @{ (__bridge id)kCVPixelBufferPixelFormatTypeKey : @(kCVPixelFormatType_32BGRA) };
         AVAssetReaderTrackOutput* out = [AVAssetReaderTrackOutput assetReaderTrackOutputWithTrack:track outputSettings:settings];
         out.alwaysCopiesSampleData = NO;
         if (![reader canAddOutput:out]) { err = "AVFoundation: no se pudo leer la pista de video"; return false; }

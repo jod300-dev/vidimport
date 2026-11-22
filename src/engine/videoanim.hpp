@@ -70,7 +70,7 @@ struct LagInfo {
     bool requested = false, active = false;
     int chunks = 0;
     long moveTriggers = 0;
-    double far = 0;
+    double farDist = 0;
     std::string note;                 // por que no se aplico (si se pidio y no se pudo)
 };
 
@@ -145,7 +145,7 @@ struct ChunkPlan {
     std::vector<std::vector<int>> groups;     // por parte: indices de grupo de resultado (los de S.used)
     std::vector<int> inStep, outStep;         // evento (paso F_e) donde va el Move de entrada / salida de cada parte
     std::vector<char> startsNear;             // la parte empieza en el origen: su intervalo "cerca" cruza el inicio de la vuelta (entrada al final de la anterior o salida en la siguiente)
-    double far = 0;
+    double farDist = 0;
 };
 
 // Agrupa los grupos de frames en partes y decide en que paso entra y sale cada una. `objs[g]` = objetos del grupo g.
@@ -192,7 +192,7 @@ inline ChunkPlan planChunks(const VideoSchedule& S, const std::vector<size_t>& o
         if (tO - tI > total - 2.0 * step) { cp.note = "las partes no caben en la vuelta (video demasiado corto para este tamano de parte)"; cp.groups.clear(); return cp; }
         cp.groups.push_back(grp); cp.inStep.push_back(inE); cp.outStep.push_back(outE); cp.startsNear.push_back((wrapIn || wrapOut) ? 1 : 0);   // el intervalo "cerca" cruza el inicio de la vuelta: en regimen estable empieza cada vuelta cerca
     }
-    cp.far = std::max(lp.farDistance, 2.0 * imageWidthUnits + 1500.0);
+    cp.farDist = std::max(lp.farDistance, 2.0 * imageWidthUnits + 1500.0);
     cp.active = true;
     return cp;
 }
@@ -297,13 +297,13 @@ inline std::string buildVideoString(const std::vector<Result>& results, const Vi
         for (int g : S.used) objs[size_t(g)] = results[size_t(g)].shapes.size();
         const GdSize sz0 = gdImageSize(results[size_t(S.ev[0].group)], p.eo);
         cp = vdetail::planChunks(S, objs, plan.fps, p.lag, sz0.w);
-        li.active = cp.active; li.note = cp.note; li.chunks = int(cp.groups.size()); li.far = cp.far;
+        li.active = cp.active; li.note = cp.note; li.chunks = int(cp.groups.size()); li.farDist = cp.farDist;
         if (cp.active) {
             for (size_t k = 0; k < cp.groups.size(); ++k) {
                 for (int g : cp.groups[k]) {
                     if (!cp.startsNear[k]) farGroup[size_t(g)] = 1;
-                    movesAt[size_t(cp.inStep[k])].push_back({g, -cp.far});
-                    movesAt[size_t(cp.outStep[k])].push_back({g, +cp.far});
+                    movesAt[size_t(cp.inStep[k])].push_back({g, -cp.farDist});
+                    movesAt[size_t(cp.outStep[k])].push_back({g, +cp.farDist});
                     li.moveTriggers += 2;
                 }
             }
@@ -323,7 +323,7 @@ inline std::string buildVideoString(const std::vector<Result>& results, const Vi
         const Result& r = results[size_t(g)];
         GdExportOptions eo = p.eo;
         eo.groupStr = std::to_string(G[size_t(g)]);
-        if (farGroup[size_t(g)]) eo.originX = p.eo.originX + cp.far;      // espera lejos hasta que su Move la traiga
+        if (farGroup[size_t(g)]) eo.originX = p.eo.originX + cp.farDist;      // espera lejos hasta que su Move la traiga
         eo.zBase = zb[size_t(g)];
         eo.monoFastPath = false;
         if (!p.palette.empty()) {                                  // canal de cada color de ESTE grupo = canal global de la paleta

@@ -131,9 +131,9 @@ struct Sim {
         }
     }
     // Objetos 'cerca' de la camara (|x - cx| <= halfW) y de ellos los ACTIVOS (no desactivados por Toggle): lo que GD tendria que recorrer.
-    void nearCounts(double cx, double halfW, long& near, long& nearActive) const {
-        near = nearActive = 0;
-        for (auto& o : objs) if (o.id == 3092 && std::abs(o.x - cx) <= halfW) { ++near; if (visible(o)) ++nearActive; }
+    void nearCounts(double cx, double halfW, long& nearN, long& nearActive) const {
+        nearN = nearActive = 0;
+        for (auto& o : objs) if (o.id == 3092 && std::abs(o.x - cx) <= halfW) { ++nearN; if (visible(o)) ++nearActive; }
     }
     // Rasteriza lo visible: pxPerUnit px por unidad de GD; origen (ox,oy) = centro; W,H en px.
     Image render(double ox, double oy, double pxPerUnit, int W, int H, const Opt& opt, std::mt19937& rng) const {

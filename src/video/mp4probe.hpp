@@ -204,7 +204,7 @@ inline Info probe(const std::string& path, size_t maxMoov = 256u * 1024u * 1024u
             if (cp >= 0x10000) { cp -= 0x10000; w += wchar_t(0xD800 + (cp >> 10)); w += wchar_t(0xDC00 + (cp & 0x3FF)); }
             else w += wchar_t(cp);
         }
-        f = _wfopen(w.c_str(), L"rb");
+        if (_wfopen_s(&f, w.c_str(), L"rb") != 0) f = nullptr;    // (_wfopen esta marcada como obsoleta en MSVC)
     }
 #else
     FILE* f = std::fopen(path.c_str(), "rb");
