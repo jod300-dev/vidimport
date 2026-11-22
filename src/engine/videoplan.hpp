@@ -26,6 +26,7 @@ namespace gdx {
 struct VideoClip {
     std::vector<Image> frames;      // un frame por instante t_k = k / fps (RGBA opaco)
     int fps = 12;
+    double length = 0;              // duracion REAL del tramo en segundos (0 = frames / fps). Con ella el bucle dura exactamente lo que el MP4
 };
 
 struct VideoPlanOptions {
@@ -43,6 +44,7 @@ struct VideoPlanOptions {
 struct VideoPlan {
     int fps = 12;
     int frames = 0;                 // N frames del tramo
+    double length = 0;              // duracion de la vuelta en segundos (la del tramo de video; el ultimo frame dura lo que reste)
     std::vector<int> group;         // frame -> grupo (0..U-1, en orden de primera aparicion)
     std::vector<int> rep;           // grupo -> frame representante
     std::vector<int> budget;        // grupo -> objetos
@@ -54,7 +56,8 @@ struct VideoPlan {
     int maxFramesFit = 0;           // frames que SI caben con minPerFrame
     double avgPerGroup = 0;
     int groups() const { return int(rep.size()); }
-    double seconds() const { return fps > 0 ? double(frames) / fps : 0; }
+    // Duracion de la vuelta del bucle. Es la del tramo de video (no N / fps): asi a 12 y a 30 fps la animacion dura EXACTAMENTE lo mismo que el MP4.
+    double seconds() const { return length > 0 ? length : (fps > 0 ? double(frames) / fps : 0); }
 };
 
 // Cota de triggers de una animacion con `events` pasos y `groups` grupos de frames (vale para Toggle y Spawn).
@@ -114,6 +117,11 @@ inline VideoPlan planVideo(const VideoClip& clip, const VideoPlanOptions& o) {
     VideoPlan p;
     p.fps = clip.fps; p.frames = int(clip.frames.size());
     const int N = p.frames;
+    {   // duracion real del tramo: solo se acepta si cuadra con el numero de frames (a lo sumo medio frame de diferencia)
+        const double nominal = clip.fps > 0 ? double(N) / clip.fps : 0.0;
+        const double half = clip.fps > 0 ? 0.5 / clip.fps : 0.0;
+        p.length = (clip.length > 0 && std::abs(clip.length - nominal) <= half + 1e-6) ? clip.length : nominal;
+    }
     p.group.assign(size_t(N), 0);
     if (N == 0) { p.fits = false; return p; }
 

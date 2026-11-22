@@ -8,7 +8,7 @@
   },
   "id": "patasma.video_importer",
   "name": "Video Importer",
-  "version": "v1.0.1-beta",
+  "version": "v1.0.2-beta",
   "developer": "Patasma",
   "description": "Convierte un MP4 en una animacion del editor: cada frame (12 o 30 fps) son objetos y se reproduce con Toggle triggers + Spawn triggers (modo lista exacta o cadena ligera), en bucle infinito, con partes anti-lag opcionales (color en HSV o en canales), dentro de un presupuesto de 400-500k objetos.",
   "resources": {
@@ -54,6 +54,30 @@
       "max": 4.0,
       "name": "Bloque del modo Spawn (s)",
       "description": "El modo <cy>Spawn</c> encadena los frames en bloques de esta duracion y se resincroniza al empezar cada uno. Mas corto = mas exacto; mas largo = menos triggers."
+    },
+    "time-scale": {
+      "type": "float",
+      "default": 1.0,
+      "min": 0.5,
+      "max": 2.0,
+      "name": "Correccion de velocidad (x)",
+      "description": "Multiplica TODOS los tiempos de la animacion (retardos y duracion del bucle). <cy>1.0</c> = exacto: dura lo mismo que el MP4. Si en tu GD la animacion dura MENOS que el video (va rapido), sube el valor (p. ej. 1.05); si dura mas, bajalo. Mira en <cy>play-log.txt</c> el tiempo del bucle."
+    },
+    "trigger-spread-x": {
+      "type": "int",
+      "default": 50,
+      "min": 0,
+      "max": 500,
+      "name": "Triggers: ampliar en X (bloques)",
+      "description": "Bloques que se AÑADEN al ancho de la zona donde se colocan los triggers (rejilla base de 80 bloques). Mas ancho = menos triggers apilados en un mismo sitio."
+    },
+    "trigger-spread-y": {
+      "type": "int",
+      "default": 50,
+      "min": 0,
+      "max": 500,
+      "name": "Triggers: ampliar en Y (bloques)",
+      "description": "Bloques que se AÑADEN al alto de la zona donde se colocan los triggers. El espacio entre filas se agranda para que la zona crezca esos bloques."
     },
     "lag-chunk-objects": {
       "type": "int",

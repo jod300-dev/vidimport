@@ -16,6 +16,7 @@ namespace {
     constexpr int kEditorObjectMargin = 3000;                       // colchon para lo que el nivel ya tenga o lo que GD anada
     constexpr int kMinSize = 150, kMaxSize = 6000;
     constexpr int kAbsMinTotal = 10000;
+    constexpr double kMaxLengthSec = 500.0;                         // tope del deslizador de duracion (s)
     constexpr int kHardMinPerFrame = 40;                            // suelo ABSOLUTO del deslizador de duracion (calidad muy baja, pero cabe)
     constexpr int kMaxGroup = 9999;
 
@@ -355,13 +356,13 @@ static int framesThatFit(int total, int palette, int perFrame, int groupBase, bo
 
 // Duracion MAXIMA del deslizador (suelo absoluto de 40 obj/frame): se puede llegar lejos, aunque con calidad baja.
 double VideoPopup::maxLengthFit() const {
-    return double(framesThatFit(maxTotal(), paletteSize(), kHardMinPerFrame, m_groupBase, m_lag)) / double(m_fps);
+    return std::min(kMaxLengthSec, double(framesThatFit(maxTotal(), paletteSize(), kHardMinPerFrame, m_groupBase, m_lag)) / double(m_fps));
 }
 
 // Duracion RECOMENDADA (con el minimo por frame de Ajustes): la que se propone al abrir un video.
 double VideoPopup::softLengthFit() const {
     const int minPer = std::clamp(int(Mod::get()->getSettingValue<int>("min-per-frame")), 30, 3000);
-    return double(framesThatFit(maxTotal(), paletteSize(), minPer, m_groupBase, m_lag)) / double(m_fps);
+    return std::min(kMaxLengthSec, double(framesThatFit(maxTotal(), paletteSize(), minPer, m_groupBase, m_lag)) / double(m_fps));
 }
 
 int VideoPopup::perFrameEstimate() const {
@@ -723,7 +724,10 @@ void VideoPopup::applyPreview(std::shared_ptr<PreviewJob> job) {
     std::string note = m_loadNote;
     const int minPer = std::clamp(int(Mod::get()->getSettingValue<int>("min-per-frame")), 30, 3000);
     if (pf < minPer) note = "Calidad baja (" + std::to_string(pf) + " obj/frame): acorta la duracion, usa 12 fps o sube el tope. " + note;
-    else if (m_length >= fit - 1e-6 && fit < m_info.duration - m_start - 1e-6) note = "Duracion limitada por el tope de objetos o de grupos. " + note;
+    else if (m_length >= fit - 1e-6 && fit < m_info.duration - m_start - 1e-6) {
+        if (fit >= kMaxLengthSec - 1e-6) note = "Duracion limitada a 500 s. " + note;
+        else note = "Duracion limitada por el tope de objetos o de grupos de GD (9999; hacen falta ~2 por frame: a 12 fps cabe mas que a 30). " + note;
+    }
     this->setStatus(a, b, note);
 }
 
@@ -889,6 +893,7 @@ void VideoPopup::onPlace(CCObject*) {
             } else if (!job->prog.cancel.load()) {
                 gdx::VideoClip clip;
                 clip.fps = job->fps;
+                clip.length = sr.length;                      // duracion real del tramo: el bucle dura EXACTAMENTE lo que el MP4 (a 12 y a 30 fps)
                 clip.frames = std::move(sr.frames);
                 gdx::stabilizeFrames(clip.frames, job->po.stabilizeTol);
                 job->plan = gdx::planVideo(clip, job->po);
@@ -923,6 +928,9 @@ void VideoPopup::finishBuild(std::shared_ptr<BuildJob> job) {
     p.eo = makeExportOptions();
     p.mode = m_mode;
     p.blockSeconds = std::clamp(mod->getSettingValue<double>("spawn-block"), 0.25, 4.0);
+    p.timeScale = std::clamp(mod->getSettingValue<double>("time-scale"), 0.5, 2.0);
+    p.spreadXBlocks = std::clamp(int(mod->getSettingValue<int>("trigger-spread-x")), 0, 500);
+    p.spreadYBlocks = std::clamp(int(mod->getSettingValue<int>("trigger-spread-y")), 0, 500);
     if (job->chan) p.palette = job->palette;       // vacia = HSV
     p.lag = job->lagParams;
     const CCPoint origin = placementOrigin();
@@ -954,18 +962,18 @@ void VideoPopup::finishBuild(std::shared_ptr<BuildJob> job) {
         this->applyPreview(nullptr);
         return;
     }
-    const auto S = gdx::scheduleVideo(job->plan, p.mode, nullptr, p.blockSeconds);
+    const auto S = gdx::scheduleVideo(job->plan, p.mode, nullptr, p.blockSeconds, p.timeScale);
     std::string lagText;
     if (lagInfo.active) lagText = " | " + std::to_string(lagInfo.chunks) + " partes anti-lag";
     else if (lagInfo.requested) lagText = " | anti-lag NO aplicado: " + lagInfo.note;
     char msg[320];
-    std::snprintf(msg, sizeof msg, "Video colocado: %d frames (%d distintos), %zu objetos, grupos %d-%d | %s%s%s%s",
-                  job->plan.frames, job->plan.groups(), count, p.baseGroup, p.baseGroup + std::max(0, S.groupsNeeded - 1),
+    std::snprintf(msg, sizeof msg, "Video colocado: %.2f s, %d frames (%d distintos), %zu objetos, grupos %d-%d | %s%s%s%s",
+                  job->plan.seconds(), job->plan.frames, job->plan.groups(), count, p.baseGroup, p.baseGroup + std::max(0, S.groupsNeeded - 1),
                   p.mode == gdx::PlayMode::Toggle ? "Toggle" : "Spawn", job->chan ? " | canales" : "", lagText.c_str(), job->backend.empty() ? "" : (" | " + job->backend).c_str());
     {   // resumen para el log de "Guardar log al jugar"
-        char sum[420];
-        std::snprintf(sum, sizeof sum, "%zu objetos, cadena %.1f MB, %d frames (%d distintos), grupos %d-%d, modo %s%s, anti-lag %s (%d partes, espera hasta x+%.0f%s)",
-                      count, double(str.size()) / (1024.0 * 1024.0), job->plan.frames, job->plan.groups(), p.baseGroup, p.baseGroup + std::max(0, S.groupsNeeded - 1),
+        char sum[640];
+        std::snprintf(sum, sizeof sum, "bucle %.3f s (escala x%.3f, M se relanza a los %.3f s), %zu objetos, cadena %.1f MB, %d frames (%d distintos), grupos %d-%d, modo %s%s, anti-lag %s (%d partes, espera hasta x+%.0f%s)",
+                      job->plan.seconds(), p.timeScale, S.total, count, double(str.size()) / (1024.0 * 1024.0), job->plan.frames, job->plan.groups(), p.baseGroup, p.baseGroup + std::max(0, S.groupsNeeded - 1),
                       p.mode == gdx::PlayMode::Toggle ? "Toggle" : "Spawn", job->chan ? "+canales" : "", lagInfo.active ? "SI" : "no", lagInfo.chunks, lagInfo.farDist, p.lag.spread ? ", cada parte a distinta distancia" : "");
         mod->setSavedValue<std::string>("last-placement", std::string(sum));
     }
@@ -979,7 +987,7 @@ void VideoPopup::onInfo(CCObject*) {
         "Elige un <cy>MP4</c> (H.264 funciona siempre; HEVC/VP9/AV1 dependen de tu sistema). Cada frame se convierte en objetos con el <cy>metodo</c> elegido y va en su propio <cy>grupo</c>.\n\n"
         "- <cg>12 fps / 30 fps</c>: a cuantos fotogramas por segundo se muestrea el video. 12 = mas objetos por frame y videos mas largos; 30 = mas fluido.\n"
         "- <cg>Objetos totales</c>: presupuesto de TODA la animacion (por defecto 450000). Se reparte entre los frames segun su detalle; los frames casi iguales se reutilizan.\n"
-        "- <cg>Inicio / Duracion</c>: el tramo del video. La duracion maxima sale del tope de objetos (minimo por frame en Ajustes).\n\n"
+        "- <cg>Inicio / Duracion</c>: el tramo del video (hasta 500 s). La duracion maxima sale ademas del tope de objetos y de los 9999 grupos de GD. El bucle dura exactamente lo que el tramo; si en tu GD va mas rapido o lento, usa <cy>Correccion de velocidad</c> en Ajustes.\n\n"
         "<cy>Toggle (exacto)</c>: un Spawn por paso con su instante absoluto; la animacion no se desincroniza nunca.\n"
         "<cy>Spawn (ligero)</c>: los pasos se encadenan y se resincronizan cada segundo; la mitad de Spawn y sin pico al empezar cada vuelta.\n\n"
         "La animacion usa solo <cy>Toggle</c> y <cy>Spawn</c> triggers. El color va en <cy>HSV</c> dentro de cada objeto; con <cy>Canales</c> los objetos usan canales de color (2..) con una paleta unica para todo el video, fijada por Color triggers (uno por canal) al inicio del nivel: cadena mas corta, pero con menos colores (ver Ajustes). "

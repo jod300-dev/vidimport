@@ -119,8 +119,9 @@ struct SampleResult {
     bool ok() const { return error.empty() && !frames.empty(); }
 };
 
-// Cuantos frames salen de `length` segundos a `fps` (con un epsilon: 3.0 s a 12 fps = 36 exactos).
-inline int framesFor(double length, double fps) { return std::max(0, int(std::floor(length * fps + 1e-6))); }
+// Cuantos frames salen de `length` segundos a `fps`: el entero MAS CERCANO (3.0 s a 12 fps = 36 exactos; un tramo de 10.03 s a 12 fps = 120).
+// La duracion del bucle no depende de este redondeo: se usa la duracion real del tramo (VideoClip::length), asi el ultimo frame dura lo que reste.
+inline int framesFor(double length, double fps) { return std::max(0, int(std::floor(length * fps + 0.5))); }
 
 // Elige, para cada instante t_k = start + k / fps, el frame decodificado MAS CERCANO en el tiempo (igual que `-vf fps` de ffmpeg,
 // round=near). Se alimenta con frames en orden de pts; guarda solo los elegidos (el resto ni se convierte).

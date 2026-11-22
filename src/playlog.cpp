@@ -120,7 +120,7 @@ namespace {
         long spikesLogged = 0;
         void reset() { sum = worst = 0; n = over33 = over50 = over100 = 0; }
     } g_fs;
-    std::chrono::steady_clock::time_point g_initStart, g_setupDone;
+    std::chrono::steady_clock::time_point g_initStart, g_setupDone, g_lastFlush;
     long g_updatesAfterSetup = 0;                                // PlayLayer::update recibidos tras setupHasCompleted (para saber si el juego llego a correr)
     double msSince(std::chrono::steady_clock::time_point t) {
         return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t).count();
@@ -147,8 +147,13 @@ namespace {
         if (g_fs.n == 0) return;
         std::ostringstream o;
         const double avg = g_fs.sum / double(g_fs.n);
+        // Reloj del juego (suma de los dt que recibe PlayLayer::update) frente al reloj REAL en este tramo: si no sale ~1.00, el tiempo de GD
+        // no avanza a la par que el real (lag, dt recortado...) y la animacion no dura lo mismo que el video aunque los retardos sean exactos.
+        const double wall = msSince(g_lastFlush) / 1000.0;
         o << "juego (" << why << ") t=" << (msSince(g_playStart) / 1000.0) << " s | " << g_fs.n << " fotogramas | fps medio " << (avg > 0 ? 1.0 / avg : 0.0)
-          << " | peor fotograma " << (g_fs.worst * 1000.0) << " ms | >33 ms: " << g_fs.over33 << " | >50 ms: " << g_fs.over50 << " | >100 ms: " << g_fs.over100;
+          << " | peor fotograma " << (g_fs.worst * 1000.0) << " ms | >33 ms: " << g_fs.over33 << " | >50 ms: " << g_fs.over50 << " | >100 ms: " << g_fs.over100
+          << " | reloj juego/real = " << (wall > 0.05 ? g_fs.sum / wall : 0.0) << " (" << g_fs.sum << " s de juego en " << wall << " s reales)";
+        g_lastFlush = std::chrono::steady_clock::now();
         append(o.str());
         g_fs.reset();
     }
@@ -187,7 +192,7 @@ class $modify(PlayLogPlayLayer, PlayLayer) {
         o << "PlayLayer::setupHasCompleted | el nivel CARGO entero (" << msSince(g_initStart) << " ms desde init)";
         append(o.str());
         g_playing = true; g_fs.reset(); g_fs.spikesLogged = 0; g_playStart = std::chrono::steady_clock::now();
-        g_setupDone = g_playStart; g_updatesAfterSetup = 0;
+        g_setupDone = g_playStart; g_lastFlush = g_playStart; g_updatesAfterSetup = 0;
     }
 
     void update(float dt) {

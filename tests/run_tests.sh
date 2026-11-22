@@ -22,6 +22,7 @@ ffmpeg -v error -y -f lavfi -i mandelbrot=size=640x360:rate=12 -t 20 -c:v libx26
 for m in 0 1; do $W/lag $W/m20.mp4 12 $m 120000 15000 20 | tail -2; done
 $W/lag $W/m20.mp4 12 0 120000 500 20 | tail -2
 echo "-- partes a distinta distancia (paso 30000 y 10000):"; SPREAD=30000 $W/lag $W/m20.mp4 12 0 120000 15000 20 | grep -E "mitad|OK|FALLO"; SPREAD=10000 $W/lag $W/m20.mp4 12 1 120000 3000 20 | grep -E "mitad|OK|FALLO"
+echo "== tiempo del bucle (= duracion del video a 12 y 30 fps, con escala) y rejilla de triggers (+50 bloques en X e Y)"; $CXX timing_test.cpp $S/video/decode_stub.cpp -o $W/timing && $W/timing | tail -3
 echo "== yuv android"; g++ -std=c++20 -O1 -Indkmock -I$S -I$S/video -Wl,--unresolved-symbols=ignore-all yuv_android_test.cpp -o $W/yuv
 ffmpeg -v error -y -f lavfi -i color=c=0x3080C0:s=64x48:r=1 -frames:v 1 -vf "scale=out_color_matrix=bt709:out_range=tv,format=nv12" -f rawvideo $W/nv12.raw
 ffmpeg -v error -y -f rawvideo -pix_fmt nv12 -s 64x48 -i $W/nv12.raw -vf "scale=in_color_matrix=bt709:in_range=tv:out_range=pc,format=rgba" -f rawvideo $W/ref.rgba
