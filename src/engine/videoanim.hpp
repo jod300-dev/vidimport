@@ -61,7 +61,7 @@ struct LagParams {
     bool enable = false;
     int chunkObjects = 25000;         // objetos por parte (una parte = frames consecutivos hasta sumar al menos esto; ~1 frame = flujo continuo)
     double leadSeconds = 0.5;         // el Move de entrada va tanto tiempo ANTES del primer frame de la parte
-    double farDistance = 3000.0;      // unidades X a las que esperan (se agranda sola si el video es muy ancho)
+    double farDistance = 30000.0;     // unidades X a las que esperan (30000 = 1000 bloques; se agranda sola si el video es muy ancho)
     int objectIdMove = 901;
 };
 

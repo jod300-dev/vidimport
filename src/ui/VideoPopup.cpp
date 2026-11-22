@@ -857,7 +857,7 @@ void VideoPopup::onPlace(CCObject*) {
     job->lagParams.enable = m_lag;
     job->lagParams.chunkObjects = std::clamp(int(mod->getSettingValue<int>("lag-chunk-objects")), 500, 200000);
     job->lagParams.leadSeconds = std::clamp(mod->getSettingValue<double>("lag-lead"), 0.1, 3.0);
-    job->lagParams.farDistance = std::clamp(double(mod->getSettingValue<int>("lag-far")), 1500.0, 20000.0);
+    job->lagParams.farDistance = std::clamp(double(mod->getSettingValue<int>("lag-far")), 1500.0, 300000.0);
     job->paletteSize = std::max(8, paletteSize() ? paletteSize() : 128);
     job->method = method();
     job->po = makePlanOptions();

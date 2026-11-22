@@ -73,11 +73,11 @@
     },
     "lag-far": {
       "type": "int",
-      "default": 3000,
+      "default": 30000,
       "min": 1500,
-      "max": 20000,
+      "max": 300000,
       "name": "Anti-lag: distancia de espera (unidades)",
-      "description": "A cuantas unidades en X esperan las partes. Se agranda sola si el video es muy ancho. 30 unidades = 1 bloque."
+      "description": "A cuantas unidades en X esperan las partes que aun no tocan (30 unidades = 1 bloque; 30000 = 1000 bloques). Mas lejos = mas seguro de que no se vean ni entren en juego. Se agranda sola si el video es muy ancho. Si tu editor no admite objetos tan lejos, bajalo."
     },
     "first-group": {
       "type": "int",

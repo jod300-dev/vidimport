@@ -40,7 +40,7 @@ Los dos usan el mismo z-order (creciente en el tiempo: el frame nuevo tapa del t
 
 ## Partes anti-lag (casilla *Partes anti-lag (Move)*)
 Con 400-500k objetos, aunque los frames ocultos esten desactivados, GD sigue teniendo ~450k objetos en las mismas secciones. Con esta casilla los frames se agrupan en **partes** de ~25000 objetos (Ajustes: *objetos por parte*) y solo una esta cerca de la camara:
-1. Todas las partes menos la primera **esperan juntas y lejos en X** (3000 unidades por defecto; sin Toggle de parte: solo la distancia las deja fuera de juego).
+1. Todas las partes menos la primera **esperan juntas y lejos en X** (30000 unidades = 1000 bloques por defecto, ajustable hasta 300000; sin Toggle de parte: solo la distancia las deja fuera de juego).
 2. Un **Move instantaneo (-D, 0)** trae la parte siguiente `anticipacion` segundos (0,5 s) ANTES de su primer frame; sus frames siguen ocultos por Toggle, asi que no se ve.
 3. Cuando la parte termina y su ultimo frame ya esta oculto, otro **Move (+D, 0)** la devuelve lejos. Entra la siguiente y asi hasta cerrar la vuelta; el bucle repite el ciclo sin deriva.
 
