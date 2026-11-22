@@ -5,6 +5,8 @@
 //    * al pulsar Jugar (pagina del nivel) y Guardar y jugar (editor): tamano de la cadena del nivel, objetos, X maxima, triggers...
 //    * al empezar PlayLayer::init: nombre y tamano del nivel; al terminar: si devolvio true/false y cuanto tardo
 //    * si el nivel termino de cargar (PlayLayer::setupHasCompleted)
+//    * DESPUES de cargar: cada 5 s de juego, fps medio, peor fotograma y cuantos fotogramas pasaron de 33 / 50 ms (mide el LAG de verdad),
+//      los picos de mas de 100 ms, y como termina la partida (salir, completar el nivel, o volver a la pagina del nivel)
 //    * si GD vuelve a la pagina del nivel SIN haber terminado de cargar -> se guarda ademas el final del log de Geode
 //  Archivo: <carpeta de datos del mod>/play-log.txt  (en Geode: pestana del mod -> "Abrir carpeta de datos").
 //  Cada linea se escribe y se cierra al momento: si GD se cierra de golpe, lo anterior queda guardado.
@@ -107,9 +109,36 @@ namespace {
     }
 
     bool g_pendingLoad = false;                                  // PlayLayer::init empezo y aun no hubo setupHasCompleted
+    bool g_playing = false;                                      // el nivel cargo y se esta jugando
+    std::chrono::steady_clock::time_point g_playStart;
+
+    // Estadisticas de fotogramas (dt de PlayLayer::update): se vuelcan al log cada 5 s de juego y al salir.
+    struct FrameStats {
+        double sum = 0, worst = 0; long n = 0, over33 = 0, over50 = 0, over100 = 0;
+        double wallStart = 0;
+        long spikesLogged = 0;
+        void reset() { sum = worst = 0; n = over33 = over50 = over100 = 0; }
+    } g_fs;
     std::chrono::steady_clock::time_point g_initStart;
     double msSince(std::chrono::steady_clock::time_point t) {
         return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t).count();
+    }
+    void flushStats(char const* why) {
+        if (g_fs.n == 0) return;
+        std::ostringstream o;
+        const double avg = g_fs.sum / double(g_fs.n);
+        o << "juego (" << why << ") t=" << (msSince(g_playStart) / 1000.0) << " s | " << g_fs.n << " fotogramas | fps medio " << (avg > 0 ? 1.0 / avg : 0.0)
+          << " | peor fotograma " << (g_fs.worst * 1000.0) << " ms | >33 ms: " << g_fs.over33 << " | >50 ms: " << g_fs.over50 << " | >100 ms: " << g_fs.over100;
+        append(o.str());
+        g_fs.reset();
+    }
+    void endPlay(std::string const& how) {
+        if (!g_playing) return;
+        flushStats("final");
+        std::ostringstream o;
+        o << "FIN de la partida: " << how << " tras " << (msSince(g_playStart) / 1000.0) << " s de juego";
+        append(o.str());
+        g_playing = false;
     }
 }
 
@@ -137,6 +166,34 @@ class $modify(PlayLogPlayLayer, PlayLayer) {
         std::ostringstream o;
         o << "PlayLayer::setupHasCompleted | el nivel CARGO entero (" << msSince(g_initStart) << " ms desde init)";
         append(o.str());
+        g_playing = true; g_fs.reset(); g_fs.spikesLogged = 0; g_playStart = std::chrono::steady_clock::now();
+    }
+
+    void update(float dt) {
+        PlayLayer::update(dt);
+        if (!g_playing || !enabled() || dt <= 0.f) return;
+        g_fs.sum += dt; ++g_fs.n; g_fs.worst = std::max<double>(g_fs.worst, dt);
+        if (dt > 0.033f) ++g_fs.over33;
+        if (dt > 0.050f) ++g_fs.over50;
+        if (dt > 0.100f) {
+            ++g_fs.over100;
+            if (g_fs.spikesLogged++ < 60) {                       // picos grandes: aparte, con el instante (suelen coincidir con un Move de una parte)
+                std::ostringstream o;
+                o << "  pico de " << (dt * 1000.0) << " ms en t=" << (msSince(g_playStart) / 1000.0) << " s";
+                append(o.str());
+            }
+        }
+        if (g_fs.sum >= 5.0) flushStats("5 s");
+    }
+
+    void onQuit() {
+        if (enabled()) endPlay("el jugador salio (PlayLayer::onQuit)");
+        PlayLayer::onQuit();
+    }
+
+    void levelComplete() {
+        if (enabled() && g_playing) { flushStats("nivel completado"); append("PlayLayer::levelComplete: nivel completado"); }
+        PlayLayer::levelComplete();
     }
 };
 
@@ -149,6 +206,11 @@ class $modify(PlayLogLevelInfoLayer, LevelInfoLayer) {
             o << "!! Volvio a la pagina del nivel SIN terminar de cargar (a los " << msSince(g_initStart) << " ms de empezar PlayLayer::init). "
               << levelInfo(level) << "\nFinal del log de Geode:\n" << geodeLogTail(150 * 1024);
             append(o.str());
+        }
+        else if (enabled() && g_playing) {                       // volvimos a la pagina del nivel SIN pasar por onQuit
+            const double secs = msSince(g_playStart) / 1000.0;
+            endPlay("volvio a la pagina del nivel (sin onQuit: GD lo cerro por su cuenta?)");
+            if (secs < 15.0) append("Final del log de Geode (la partida duro solo " + std::to_string(secs) + " s):\n" + geodeLogTail(150 * 1024));
         }
         return ok;
     }

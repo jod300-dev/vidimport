@@ -244,7 +244,7 @@
       "type": "bool",
       "default": true,
       "name": "Guardar log al jugar",
-      "description": "Si al jugar el nivel GD no entra y te devuelve a la pagina del nivel, esto guarda en <cy>play-log.txt</c> (carpeta de datos del mod) que paso: tamano del nivel, objetos, X maxima, si <cy>PlayLayer::init</c> fallo y el final del log de Geode. Se escribe al pulsar Jugar y Guardar y jugar."
+      "description": "Guarda en <cy>play-log.txt</c> (carpeta de datos del mod) que pasa al jugar: al pulsar Jugar / Guardar y jugar (tamano del nivel, objetos, X maxima, triggers), si <cy>PlayLayer::init</c> falla o GD vuelve a la pagina del nivel sin cargar (con el final del log de Geode), y ya dentro del nivel: fps medio, peor fotograma y picos de lag cada 5 s, y como termina la partida."
     }
   },
   "tags": [
