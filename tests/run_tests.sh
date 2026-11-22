@@ -17,6 +17,10 @@ echo "== e2e";    $CXX e2e_test.cpp $S/video/decode_stub.cpp $S/video/decode_ffm
 for m in 0 1; do $W/e2e $W/a.mp4 12 $m 40000 2 | grep -E "^N=|variante"; done
 echo "-- modo Canales (paleta de 128 colores):"; for m in 0 1; do CHAN=128 $W/e2e $W/a.mp4 12 $m 40000 2 | grep -E "^N=|variante 0"; done
 echo "-- con frames repetidos (deben detectarse):"; $W/e2e $W/frozen.mp4 30 0 450000 2 | grep -E "^N="
+echo "== anti-lag (partes): imagen identica, objetos cerca de la camara, Move, deriva"; $CXX lag_test.cpp $S/video/decode_stub.cpp $S/video/decode_ffmpeg_cli.cpp -o $W/lag
+ffmpeg -v error -y -f lavfi -i mandelbrot=size=640x360:rate=12 -t 20 -c:v libx264 -pix_fmt yuv420p $W/m20.mp4
+for m in 0 1; do $W/lag $W/m20.mp4 12 $m 120000 15000 20 | tail -2; done
+$W/lag $W/m20.mp4 12 0 120000 500 20 | tail -2
 echo "== yuv android"; g++ -std=c++20 -O1 -Indkmock -I$S -I$S/video -Wl,--unresolved-symbols=ignore-all yuv_android_test.cpp -o $W/yuv
 ffmpeg -v error -y -f lavfi -i color=c=0x3080C0:s=64x48:r=1 -frames:v 1 -vf "scale=out_color_matrix=bt709:out_range=tv,format=nv12" -f rawvideo $W/nv12.raw
 ffmpeg -v error -y -f rawvideo -pix_fmt nv12 -s 64x48 -i $W/nv12.raw -vf "scale=in_color_matrix=bt709:in_range=tv:out_range=pc,format=rgba" -f rawvideo $W/ref.rgba

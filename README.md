@@ -5,7 +5,7 @@ Mod de Geode que convierte un MP4 en objetos del editor y lo anima en bucle infi
 ## Uso
 1. Abre el editor, pulsa el boton del importador (barra *Edit*).
 2. **Video** -> elige el MP4 (H.264 siempre funciona; HEVC/VP9/AV1 dependen del sistema).
-3. Elige el metodo (flechas), **Objetos totales**, **Lado largo**, **Inicio** y **Duracion**, **12 fps / 30 fps**, **Toggle / Spawn** y, si quieres, **Grises** y **Canales**.
+3. Elige el metodo (flechas), **Objetos totales**, **Lado largo**, **Inicio** y **Duracion**, **12 fps / 30 fps**, **Toggle / Spawn** y, si quieres, **Grises**, **Canales** y **Partes anti-lag**.
 4. **Colocar**. Se decodifica, se convierte en paralelo y se coloca por tandas (sin congelar el editor). Luego **juega el nivel**.
 
 Los 2 triggers de arranque van en x = -30. Si hay un unico objeto seleccionado, el video se centra en el; si no, en el centro de la vista.
@@ -37,6 +37,27 @@ Los dos usan el mismo z-order (creciente en el tiempo: el frame nuevo tapa del t
 | Triggers (medido) | ~7 por frame | ~6 por frame |
 | Carga | todos los Spawn se encolan al empezar cada vuelta | carga constante, sin pico |
 | Si GD pierde un Spawn | se repara solo | la cadena se repara en el siguiente bloque |
+
+## Partes anti-lag (casilla *Partes anti-lag (Move)*)
+Con 400-500k objetos, aunque los frames ocultos esten desactivados, GD sigue teniendo ~450k objetos en las mismas secciones. Con esta casilla los frames se agrupan en **partes** de ~25000 objetos (Ajustes: *objetos por parte*) y solo una esta cerca de la camara:
+1. Todas las partes menos la primera **esperan juntas y lejos en X** (3000 unidades por defecto; sin Toggle de parte: solo la distancia las deja fuera de juego).
+2. Un **Move instantaneo (-D, 0)** trae la parte siguiente `anticipacion` segundos (0,5 s) ANTES de su primer frame; sus frames siguen ocultos por Toggle, asi que no se ve.
+3. Cuando la parte termina y su ultimo frame ya esta oculto, otro **Move (+D, 0)** la devuelve lejos. Entra la siguiente y asi hasta cerrar la vuelta; el bucle repite el ciclo sin deriva.
+
+Hay un Move por grupo de frames y por sentido, dentro de los pasos que ya existian (ningun grupo nuevo). Como los Move son **relativos**, los pasos que llevan Move se ejecutan una sola vez por vuelta (en modo Toggle no llevan la segunda ejecucion de reafirmacion). La parte que empieza la vuelta (y la que termina en la siguiente) se coloca en el origen; el resto, lejos: en el editor solo veras la primera parte.
+
+*Objetos por parte* es el control de todo: **25000** = pocos Move grandes; **~1 frame** (p. ej. 1000) = flujo continuo de Move pequenos, sin picos y con muy pocos objetos cerca de la camara.
+
+**Medido en el simulador de GD** (120k objetos, 20 s a 12 fps; imagen identica con y sin partes, 3 vueltas sin deriva, Toggle y Spawn, con lag de tick 1/60 y orden inverso):
+
+| Objetos por parte | Objetos cerca de la camara (max) | Mayor Move en un tick |
+|---|---|---|
+| sin partes | 117.698 | - |
+| 15.000 | 30.548 (-74 %) | 15.407 |
+| 3.000 (lead 0,25 s) | 6.841 (-94 %) | 3.484 |
+| ~1 frame (500) | 4.882 (-96 %) | 1.510 |
+
+**Lo que NO esta verificado** (solo se puede ver en el juego): que reduzca de verdad el lag (es la hipotesis: GD recorre los objetos cercanos aunque esten desactivados), que un Move de 25k objetos instantaneo no de un tiron apreciable, y que GD mueva objetos cuya parte esta desactivada por Toggle (creo que si). La carga del nivel y la memoria no cambian. Los Move son un trigger mas que Toggle/Spawn. Si notas tirones al entrar una parte: sube *anticipacion*, baja *objetos por parte* o usa partes de ~1 frame.
 
 ## Color: HSV o Canales
 - **HSV** (por defecto): cada objeto lleva su color en HSV sobre un canal base; 16 millones de colores, cero triggers de color.

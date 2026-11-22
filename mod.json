@@ -10,7 +10,7 @@
   "name": "Video Importer",
   "version": "v1.0.0-beta",
   "developer": "Patasma",
-  "description": "Convierte un MP4 en una animacion del editor: cada frame (12 o 30 fps) son objetos y se reproduce con Toggle triggers + Spawn triggers (modo lista exacta o cadena ligera), en bucle infinito (color en HSV o en canales), dentro de un presupuesto de 400-500k objetos.",
+  "description": "Convierte un MP4 en una animacion del editor: cada frame (12 o 30 fps) son objetos y se reproduce con Toggle triggers + Spawn triggers (modo lista exacta o cadena ligera), en bucle infinito, con partes anti-lag opcionales (color en HSV o en canales), dentro de un presupuesto de 400-500k objetos.",
   "resources": {
     "spritesheets": {
       "VideoBtn": [
@@ -54,6 +54,30 @@
       "max": 4.0,
       "name": "Bloque del modo Spawn (s)",
       "description": "El modo <cy>Spawn</c> encadena los frames en bloques de esta duracion y se resincroniza al empezar cada uno. Mas corto = mas exacto; mas largo = menos triggers."
+    },
+    "lag-chunk-objects": {
+      "type": "int",
+      "default": 25000,
+      "min": 500,
+      "max": 200000,
+      "name": "Anti-lag: objetos por parte",
+      "description": "Con la casilla <cy>Partes anti-lag</c>: los frames se agrupan en partes de al menos este numero de objetos. Solo una parte esta cerca de la camara; la siguiente entra con un Move instantaneo. <cy>Grande</c> (25000) = pocos Move pero grandes; <cy>pequeno</c> (~1 frame, p. ej. 1000) = flujo continuo de Move pequenos, sin picos."
+    },
+    "lag-lead": {
+      "type": "float",
+      "default": 0.5,
+      "min": 0.1,
+      "max": 3.0,
+      "name": "Anti-lag: anticipacion del Move (s)",
+      "description": "La parte siguiente se trae a la camara este tiempo ANTES de su primer frame (todavia desactivada, asi que no se ve). Dale margen si notas un tiron al entrar."
+    },
+    "lag-far": {
+      "type": "int",
+      "default": 3000,
+      "min": 1500,
+      "max": 20000,
+      "name": "Anti-lag: distancia de espera (unidades)",
+      "description": "A cuantas unidades en X esperan las partes. Se agranda sola si el video es muy ancho. 30 unidades = 1 bloque."
     },
     "first-group": {
       "type": "int",

@@ -4,6 +4,7 @@ Convierte un **MP4** en una animacion del editor de Geometry Dash. Cada frame se
 
 - **12 fps o 30 fps** (dos casillas): a que ritmo se muestrea el video.
 - **Toggle (exacto) o Spawn (ligero)**: dos formas de encadenar los frames.
+- **Partes anti-lag (Move)**: solo ~25k objetos cerca de la camara; el resto espera lejos y entra con un Move instantaneo.
 - **Color en HSV o en Canales** (paleta unica del video con Color triggers al inicio).
 - Acepta MP4 normales y fragmentados; duracion de hasta ~4900 frames (~415 s a 12 fps).
 - **Presupuesto de objetos** de hasta **500.000** para TODA la animacion (frames + triggers), repartido segun el detalle de cada frame; los frames casi iguales se reutilizan.

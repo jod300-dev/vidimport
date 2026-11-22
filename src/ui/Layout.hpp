@@ -7,10 +7,10 @@
 //      | (X)            Video Importer (beta)                    (i)  |
 //      |  +--------+   <  nombre del metodo  >                        |  y 48
 //      |  |        |      descripcion (248 x 28)                      |  y 58..86
-//      |  | vista  |   Objetos totales ................. 450000       |  y 98   / slider 110
-//      |  | previa |   Lado largo ...................... 600 u        |  y 126  / slider 138
-//      |  +--------+   Inicio .......................... 0.0 s       |  y 154  / slider 166
-//      |  estado       Duracion ......................... 12.0 s      |  y 182  / slider 194
+//      |  | vista  |   Objetos totales ................. 450000       |  y 94   / slider 105
+//      |  | previa |   Lado largo ...................... 600 u        |  y 120  / slider 131
+//      |  +--------+   Inicio .......................... 0.0 s       |  y 146  / slider 157
+//      |  estado       Duracion ......................... 12.0 s      |  y 172  / slider 183
 //      |  nota         [x] 12 fps  [ ] 30 fps   [ ] Grises            |  y 214
 //      |               [x] Toggle  [ ] Spawn                          |  y 231
 //      |  [Ajustes][UI]                       [ Video ] [ Colocar ]   |  y 262
@@ -44,15 +44,15 @@ constexpr float kDescCy = (kDescTop + kDescBottom) / 2.f;
 constexpr float kDescMaxW = kRightR - kRightL, kDescMaxH = kDescBottom - kDescTop;            // 248 x 28
 
 // 4 deslizadores: etiqueta y valor en la misma fila; el deslizador 12 mas abajo
-constexpr float kSliderLabelY[4] = {98.f, 126.f, 154.f, 182.f};
-constexpr float kSliderOffset = 12.f;
+constexpr float kSliderLabelY[4] = {94.f, 120.f, 146.f, 172.f};
+constexpr float kSliderOffset = 11.f;
 
 // checks
-constexpr float kChkRowA = 214.f, kChkRowB = 231.f;
+constexpr float kChkRowA = 201.f, kChkRowB = 218.f, kChkRowC = 235.f;
 constexpr float kChkSize = 0.45f;
 
 // fila de botones
-constexpr float kBtnRowY = 262.f;
+constexpr float kBtnRowY = 264.f;
 constexpr float kBtnH = 39.f;
 constexpr float kBtnGap = 8.f;
 constexpr float kBtnTextScale = 0.6f;

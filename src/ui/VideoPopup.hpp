@@ -54,6 +54,8 @@ protected:
         int threads = 2;
         int fps = 12;
         bool chan = false;                           // colores en canales (sin HSV)
+        bool lag = false;                            // partes anti-lag
+        gdx::LagParams lagParams;
         int paletteSize = 128;
         std::vector<std::array<uint8_t, 3>> palette;
         std::atomic<bool> cancelDecode{false};
@@ -82,6 +84,7 @@ protected:
     void onModeSpawn(CCObject*) { setMode(gdx::PlayMode::Spawn); }
     void onGray(CCObject*);
     void onChan(CCObject*);
+    void onLag(CCObject*);
 
     void setFps(int fps);
     void setMode(gdx::PlayMode m);
@@ -135,6 +138,7 @@ protected:
     gdx::PlayMode m_mode = gdx::PlayMode::Toggle;
     bool m_gray = false;
     bool m_chan = false;                   // colores en canales (sin HSV) en vez de HSV
+    bool m_lag = false;                    // partes anti-lag (Move): solo una parte cerca de la camara
 
     CCLabelBMFont* m_methodLabel = nullptr;
     CCLabelBMFont* m_descLabel = nullptr;
@@ -149,6 +153,7 @@ protected:
     CCMenuItemToggler* m_chkSpawn = nullptr;
     CCMenuItemToggler* m_chkGray = nullptr;
     CCMenuItemToggler* m_chkChan = nullptr;
+    CCMenuItemToggler* m_chkLag = nullptr;
     CCLabelBMFont* m_statA = nullptr;
     CCLabelBMFont* m_statB = nullptr;
     CCLabelBMFont* m_noteLabel = nullptr;

@@ -19,11 +19,19 @@
 //  En los dos modos MOSTRAR/OCULTAR es un TOGGLE absoluto (clave 56: 1 = activar, 0 = desactivar): los frames ocultos quedan
 //  DESACTIVADOS (GD ni los dibuja ni los procesa) en vez de seguir dibujandose con opacidad 0 -> sin lag.
 //
+//  ANTI-LAG (opcional, "partes"): los frames se agrupan en PARTES de ~N objetos (p. ej. 25000). Solo UNA parte (o dos, un instante) esta
+//  cerca de la camara: las demas ESPERAN JUNTAS Y LEJOS en X (sin Toggle de parte: solo la distancia las deja fuera de juego), asi GD no
+//  recorre 450k objetos cada fotograma. Una parte entra con un Move instantaneo (-D, 0) un poco ANTES de su primer frame (invisible: sus
+//  frames siguen ocultos por Toggle) y, cuando termina y su ultimo frame ya esta oculto, otro Move (+D, 0) la devuelve lejos. Hay UN Move
+//  por grupo de frames y por sentido, dentro del paso F_e (ningun grupo nuevo). Los Move son RELATIVOS: un paso con Move se ejecuta UNA
+//  sola vez por vuelta (en modo Toggle no lleva la segunda ejecucion de reafirmacion).
+//
 //  Robustez: z-order CRECIENTE con el tiempo (el frame nuevo tapa por completo a los anteriores: un "ocultar" perdido no se ve) y cada
 //  paso oculta los 2 anteriores y 1 frame lejano (repartido por todo el bucle: cada frame se vuelve a ocultar una vez por vuelta).
 // ============================================================================
 #pragma once
 #include <algorithm>
+#include <map>
 #include <set>
 #include <string>
 #include <vector>
@@ -48,6 +56,24 @@ inline void triggersFirst(std::string& out, size_t objEnd) {
 }
 } // namespace detail
 
+// Anti-lag: partes que esperan lejos y entran/salen con un Move instantaneo.
+struct LagParams {
+    bool enable = false;
+    int chunkObjects = 25000;         // objetos por parte (una parte = frames consecutivos hasta sumar al menos esto; ~1 frame = flujo continuo)
+    double leadSeconds = 0.5;         // el Move de entrada va tanto tiempo ANTES del primer frame de la parte
+    double farDistance = 3000.0;      // unidades X a las que esperan (se agranda sola si el video es muy ancho)
+    int objectIdMove = 901;
+};
+
+// Resultado de la planificacion de partes (para el mensaje final y los tests).
+struct LagInfo {
+    bool requested = false, active = false;
+    int chunks = 0;
+    long moveTriggers = 0;
+    double far = 0;
+    std::string note;                 // por que no se aplico (si se pidio y no se pudo)
+};
+
 struct VideoExportParams {
     GdExportOptions eo;
     int baseGroup = 1;                // primer grupo libre
@@ -60,6 +86,7 @@ struct VideoExportParams {
     // Colores en CANALES (sin HSV): paleta global ya aplicada a los Result con quantizeVideo (r.colored = true). Vacia = HSV.
     std::vector<std::array<uint8_t, 3>> palette;
     int firstChannel = kVideoFirstChannel;
+    LagParams lag;                    // partes anti-lag (lag.enable)
 };
 
 struct VEvent { double t; int group; };
@@ -92,6 +119,13 @@ inline void spawn(std::string& s, const VideoExportParams& p, double x, double y
     if (own > 0) { s += ",62,1,87,1,57,"; s += std::to_string(own); }
     s += ';';
 }
+// Move instantaneo (duracion 0) del grupo `target`: (dx, dy) en unidades de GD (30 = 1 bloque).
+inline void move(std::string& s, const VideoExportParams& p, double x, double y, int target, double dx, double dy, int own) {
+    head(s, p.lag.objectIdMove, x, y);
+    s += ",28,"; detail::appendNum(s, dx, 2); s += ",29,"; detail::appendNum(s, dy, 2);
+    s += ",10,0,51,"; s += std::to_string(target);
+    s += ",62,1,87,1,57,"; s += std::to_string(own); s += ';';
+}
 inline double reassert(double fps) { return std::max(0.005, std::min(0.02, 0.4 / std::max(1.0, fps))); }
 
 // Hasta 3 grupos a ocultar en el paso e (distintos entre si y del que se muestra).
@@ -104,6 +138,63 @@ inline std::vector<int> hideSet(const std::vector<VEvent>& ev, size_t e) {
     if (E >= 3) add((e + E - 2) % E);
     if (E >= 6) add(e + E / 2);                                 // lejano: repartido por todo el bucle
     return v;
+}
+struct ChunkPlan {
+    bool active = false;
+    std::string note;
+    std::vector<std::vector<int>> groups;     // por parte: indices de grupo de resultado (los de S.used)
+    std::vector<int> inStep, outStep;         // evento (paso F_e) donde va el Move de entrada / salida de cada parte
+    std::vector<char> startsNear;             // la parte empieza en el origen: su intervalo "cerca" cruza el inicio de la vuelta (entrada al final de la anterior o salida en la siguiente)
+    double far = 0;
+};
+
+// Agrupa los grupos de frames en partes y decide en que paso entra y sale cada una. `objs[g]` = objetos del grupo g.
+inline ChunkPlan planChunks(const VideoSchedule& S, const std::vector<size_t>& objs, int fps, const LagParams& lp, double imageWidthUnits) {
+    ChunkPlan cp;
+    const int E = int(S.ev.size());
+    if (!lp.enable) { cp.note = "desactivado"; return cp; }
+    if (S.still || E < 12) { cp.note = "el video tiene muy pocos pasos (<12)"; return cp; }
+    const double total = S.total;
+    // primer / ultimo paso en que se usa cada grupo
+    std::map<int, int> fu, lu;
+    for (int e = 0; e < E; ++e) { const int g = S.ev[size_t(e)].group; if (!fu.count(g)) fu[g] = e; lu[g] = e; }
+    std::vector<int> order(S.used.begin(), S.used.end());
+    std::sort(order.begin(), order.end(), [&](int a, int b) { return fu[a] < fu[b]; });
+    // partes: grupos consecutivos (por primer uso) hasta sumar >= chunkObjects
+    const size_t target = size_t(std::max(1, lp.chunkObjects));
+    std::vector<std::vector<int>> parts; std::vector<size_t> sums;
+    for (int g : order) {
+        if (parts.empty() || sums.back() >= target) { parts.emplace_back(); sums.push_back(0); }
+        parts.back().push_back(g); sums.back() += objs[size_t(g)];
+    }
+    if (parts.size() >= 2 && sums.back() < target / 4) {                 // cola minuscula: se une a la anterior
+        for (int g : parts.back()) parts[parts.size() - 2].push_back(g);
+        sums[sums.size() - 2] += sums.back(); parts.pop_back(); sums.pop_back();
+    }
+    if (parts.size() < 2) { cp.note = "todo el video cabe en una sola parte (baja \"objetos por parte\")"; return cp; }
+
+    auto eventAtOrBefore = [&](double t) { int e = 0; for (int i = 0; i < E; ++i) if (S.ev[size_t(i)].t <= t + 1e-9) e = i; return e; };
+    const double step = total / std::max(1, E);                           // margen minimo (un paso medio)
+    for (auto& grp : parts) {
+        int a = E, b = 0;
+        for (int g : grp) { a = std::min(a, fu[g]); b = std::max(b, lu[g]); }
+        // entrada: ultimo paso cuyo instante es <= t_a - lead (y siempre ANTES de a)
+        double tin = S.ev[size_t(a)].t - lp.leadSeconds;
+        int inE; bool wrapIn = false;
+        if (tin < 0) { wrapIn = true; inE = eventAtOrBefore(total + tin); if (inE <= b + 2) inE = std::min(E - 1, b + 3); }   // al final de la vuelta anterior
+        else { inE = eventAtOrBefore(tin); if (inE >= a) inE = std::max(0, a - 1); }
+        // salida: 2 pasos despues del ultimo uso (el ultimo frame ya esta oculto)
+        int outE = b + 2; bool wrapOut = false;
+        if (outE >= E) { outE -= E; wrapOut = true; }
+        // tiempo que la parte pasa cerca: debe caber en la vuelta con margen (si no, entrada y salida se pisarian)
+        const double tI = wrapIn ? S.ev[size_t(inE)].t - total : S.ev[size_t(inE)].t;
+        const double tO = wrapOut ? S.ev[size_t(outE)].t + total : S.ev[size_t(outE)].t;
+        if (tO - tI > total - 2.0 * step) { cp.note = "las partes no caben en la vuelta (video demasiado corto para este tamano de parte)"; cp.groups.clear(); return cp; }
+        cp.groups.push_back(grp); cp.inStep.push_back(inE); cp.outStep.push_back(outE); cp.startsNear.push_back((wrapIn || wrapOut) ? 1 : 0);   // el intervalo "cerca" cruza el inicio de la vuelta: en regimen estable empieza cada vuelta cerca
+    }
+    cp.far = std::max(lp.farDistance, 2.0 * imageWidthUnits + 1500.0);
+    cp.active = true;
+    return cp;
 }
 } // namespace vdetail
 
@@ -145,8 +236,9 @@ inline VideoSchedule scheduleVideo(const VideoPlan& plan, PlayMode mode, const s
 inline long videoTriggerCount(const VideoPlan& plan, PlayMode mode) { return scheduleVideo(plan, mode).triggers; }
 
 // results = un Result por grupo del plan. Devuelve "" si algo no cuadra (errmsg explica).
-inline std::string buildVideoString(const std::vector<Result>& results, const VideoPlan& plan, const VideoExportParams& p, std::string* errmsg = nullptr) {
+inline std::string buildVideoString(const std::vector<Result>& results, const VideoPlan& plan, const VideoExportParams& p, std::string* errmsg = nullptr, LagInfo* lagInfo = nullptr) {
     auto fail = [&](const char* m) { if (errmsg) *errmsg = m; return std::string(); };
+    if (lagInfo) *lagInfo = LagInfo{};
     const int U = plan.groups();
     if (U < 1 || int(results.size()) != U || plan.frames < 1) return fail("No hay frames convertidos");
 
@@ -194,6 +286,32 @@ inline std::string buildVideoString(const std::vector<Result>& results, const Vi
     for (size_t e = 0; e < E; ++e) F[e] = next++;
     const int M = next++, I0 = next++;
 
+    // ---- partes anti-lag
+    vdetail::ChunkPlan cp;
+    LagInfo li; li.requested = p.lag.enable;
+    std::vector<char> farGroup(size_t(U), 0);
+    std::vector<std::vector<std::pair<int, double>>> movesAt(E);            // paso -> (grupo, dx)
+    std::vector<char> stepHasMove(E, 0);
+    if (p.lag.enable) {
+        std::vector<size_t> objs(size_t(U), 0);
+        for (int g : S.used) objs[size_t(g)] = results[size_t(g)].shapes.size();
+        const GdSize sz0 = gdImageSize(results[size_t(S.ev[0].group)], p.eo);
+        cp = vdetail::planChunks(S, objs, plan.fps, p.lag, sz0.w);
+        li.active = cp.active; li.note = cp.note; li.chunks = int(cp.groups.size()); li.far = cp.far;
+        if (cp.active) {
+            for (size_t k = 0; k < cp.groups.size(); ++k) {
+                for (int g : cp.groups[k]) {
+                    if (!cp.startsNear[k]) farGroup[size_t(g)] = 1;
+                    movesAt[size_t(cp.inStep[k])].push_back({g, -cp.far});
+                    movesAt[size_t(cp.outStep[k])].push_back({g, +cp.far});
+                    li.moveTriggers += 2;
+                }
+            }
+            for (size_t e = 0; e < E; ++e) stepHasMove[e] = movesAt[e].empty() ? 0 : 1;
+        }
+    }
+    if (lagInfo) *lagInfo = li;
+
     // ---- z-order creciente: banda propia por grupo (el frame nuevo tapa del todo a los anteriores)
     std::vector<int> zb(size_t(U), p.eo.zBase);
     {
@@ -205,6 +323,7 @@ inline std::string buildVideoString(const std::vector<Result>& results, const Vi
         const Result& r = results[size_t(g)];
         GdExportOptions eo = p.eo;
         eo.groupStr = std::to_string(G[size_t(g)]);
+        if (farGroup[size_t(g)]) eo.originX = p.eo.originX + cp.far;      // espera lejos hasta que su Move la traiga
         eo.zBase = zb[size_t(g)];
         eo.monoFastPath = false;
         if (!p.palette.empty()) {                                  // canal de cada color de ESTE grupo = canal global de la paleta
@@ -234,7 +353,10 @@ inline std::string buildVideoString(const std::vector<Result>& results, const Vi
     if (p.mode == PlayMode::Toggle) {
         const double rd = vdetail::reassert(plan.fps);
         for (size_t e = 0; e < E; ++e) { at(x, y); vdetail::spawn(out, p, x, y, F[e], S.ev[e].t, M); }
-        for (size_t e = 0; e < E; ++e) { at(x, y); vdetail::spawn(out, p, x, y, F[e], S.ev[e].t + rd, M); }    // segunda ejecucion (idempotente)
+        for (size_t e = 0; e < E; ++e) {                                                                         // segunda ejecucion (idempotente)
+            if (stepHasMove[e]) continue;                                                                         // ...salvo en los pasos con Move: es RELATIVO y se aplicaria dos veces
+            at(x, y); vdetail::spawn(out, p, x, y, F[e], S.ev[e].t + rd, M);
+        }
     } else {
         const double bs = std::max(0.05, p.blockSeconds);
         long lastBlock = -1;
@@ -251,6 +373,7 @@ inline std::string buildVideoString(const std::vector<Result>& results, const Vi
         for (size_t e = 0; e < E; ++e) {
             at(x, y); vdetail::toggle(out, p, x, y, G[size_t(S.ev[e].group)], 1, F[e]);                            // primero MOSTRAR el nuevo
             for (int h : vdetail::hideSet(S.ev, e)) { at(x, y); vdetail::toggle(out, p, x, y, G[size_t(h)], 0, F[e]); }
+            for (auto& mv : movesAt[e]) { at(x, y); vdetail::move(out, p, x, y, G[size_t(mv.first)], mv.second, 0.0, F[e]); }     // anti-lag: parte que entra / sale
             if (p.mode == PlayMode::Spawn && e + 1 < E) {
                 const long b0 = long(std::floor(S.ev[e].t / bs + 1e-9)), b1 = long(std::floor(S.ev[e + 1].t / bs + 1e-9));
                 if (b0 == b1) { at(x, y); vdetail::spawn(out, p, x, y, F[e + 1], S.ev[e + 1].t - S.ev[e].t, F[e]); }  // encadenar con el paso siguiente

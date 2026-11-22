@@ -48,6 +48,9 @@ struct Sim {
     struct Ev { double t; long seq; int obj; };
     struct Cmp { bool operator()(const Ev& a, const Ev& b) const { return a.t > b.t || (a.t == b.t && a.seq > b.seq); } };
     std::priority_queue<Ev, std::vector<Ev>, Cmp> q; long seq = 0;
+    std::map<int, std::vector<int>> members;            // grupo -> indices de objetos (para Move)
+    long movesTotal = 0, movedObjsTotal = 0, maxMovedInRound = 0;   // Move triggers ejecutados / objetos desplazados (total y maximo por ronda)
+    long movedThisRound = 0;
     // visibilidad de cada objeto = min opacidad de sus grupos
     bool visible(const Obj& o) const { for (int g : o.groups) { auto it = opacity.find(g); if (it != opacity.end() && it->second == 0) return false; } return true; }
     std::array<uint8_t,3> color(const Obj& o) const {
@@ -69,10 +72,11 @@ struct Sim {
     }
     void init(const std::string& chain) {
         objs = parse(chain);
+        for (size_t i = 0; i < objs.size(); ++i) if (objs[i].id == 3092) for (int g : objs[i].groups) members[g].push_back(int(i));
         for (size_t i = 0; i < objs.size(); ++i) {
             const Obj& o = objs[i];
             if (o.id == 899 && !o.has(62)) chColor[int(o.geti(23))] = {uint8_t(o.geti(7)), uint8_t(o.geti(8)), uint8_t(o.geti(9))};   // Color trigger de arranque
-            if ((o.id == 1007 || o.id == 1049 || o.id == 1268 || o.id == 899) && o.has(62)) for (int g : o.groups) trigsIn[g].push_back(int(i));
+            if ((o.id == 1007 || o.id == 1049 || o.id == 1268 || o.id == 899 || o.id == 901) && o.has(62)) for (int g : o.groups) trigsIn[g].push_back(int(i));
         }
         // triggers de posicion: se ejecutan al empezar (t=0), de izquierda a derecha
         std::vector<int> pos;
@@ -90,6 +94,7 @@ struct Sim {
                 while (!q.empty() && q.top().t < tk - 1e-12 && q.top().t <= tUntil + 1e-9) { batch.push_back(q.top()); q.pop(); }
                 if (opt.reverseTick) std::stable_sort(batch.begin(), batch.end(), [&](const Ev& a, const Ev& b) { return a.t > b.t; });
             } else while (!q.empty() && std::abs(q.top().t - t) < 1e-9) { batch.push_back(q.top()); q.pop(); }
+            movedThisRound = 0;
             // una "ronda" del mismo instante: lo que dispare un spawn con retardo 0 entra en la misma ronda
             while (!batch.empty()) {
                 if (opt.tick > 0) { /* se respeta el orden del salto */ }
@@ -103,6 +108,14 @@ struct Sim {
                     if (ob.id == 1007 || ob.id == 1049) {
                         if (spawnTriggered && opt.dropAlpha > 0 && U(rng) < opt.dropAlpha) continue;     // este Alpha / Toggle se pierde
                         opacity[target] = ob.id == 1007 ? int(ob.geti(35, 1)) : int(ob.geti(56, 0) != 0);   // Toggle: clave 56 (activar grupo), por defecto desactivar
+                    } else if (ob.id == 901) {                                                                // Move instantaneo (duracion 0): desplaza TODOS los objetos del grupo
+                        if (spawnTriggered && opt.dropAlpha > 0 && U(rng) < opt.dropAlpha) continue;
+                        if (ob.geti(10, 0) > 1e-9) continue;                                                  // (solo se simulan los instantaneos)
+                        const double mx = ob.geti(28, 0), my = ob.geti(29, 0);
+                        auto it = members.find(target);
+                        if (it != members.end()) for (int oi : it->second) { objs[size_t(oi)].x += mx; objs[size_t(oi)].y += my; }
+                        ++movesTotal; const long n = it == members.end() ? 0 : long(it->second.size());
+                        movedObjsTotal += n; movedThisRound += n; maxMovedInRound = std::max(maxMovedInRound, movedThisRound);
                     } else if (ob.id == 899) {                                                                // Color trigger spawn-triggered: color absoluto del canal
                         if (spawnTriggered && opt.dropAlpha > 0 && U(rng) < opt.dropAlpha) continue;
                         chColor[int(ob.geti(23))] = {uint8_t(ob.geti(7)), uint8_t(ob.geti(8)), uint8_t(ob.geti(9))};
@@ -116,6 +129,11 @@ struct Sim {
                 batch = std::move(next);
             }
         }
+    }
+    // Objetos 'cerca' de la camara (|x - cx| <= halfW) y de ellos los ACTIVOS (no desactivados por Toggle): lo que GD tendria que recorrer.
+    void nearCounts(double cx, double halfW, long& near, long& nearActive) const {
+        near = nearActive = 0;
+        for (auto& o : objs) if (o.id == 3092 && std::abs(o.x - cx) <= halfW) { ++near; if (visible(o)) ++nearActive; }
     }
     // Rasteriza lo visible: pxPerUnit px por unidad de GD; origen (ox,oy) = centro; W,H en px.
     Image render(double ox, double oy, double pxPerUnit, int W, int H, const Opt& opt, std::mt19937& rng) const {
@@ -132,6 +150,8 @@ struct Sim {
         for (const Obj* o : v) {
             Shape s; s.cx = float((o->x - ox) * pxPerUnit + W * 0.5); s.cy = float((oy - o->y) * pxPerUnit + H * 0.5);
             s.w = float(o->geti(128, 1) * pxPerUnit); s.h = float(o->geti(129, 1) * pxPerUnit); s.rot = float(o->geti(6, 0));
+            const float ext = s.w + s.h;                                   // las partes que esperan LEJOS quedan fuera del lienzo: no se rasterizan
+            if (s.cx + ext < 0 || s.cx - ext > W || s.cy + ext < 0 || s.cy - ext > H) continue;
             auto c = color(*o); s.r = c[0]; s.g = c[1]; s.b = c[2]; s.z = 0;
             sh.push_back(s);
         }

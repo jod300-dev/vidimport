@@ -214,6 +214,7 @@ bool VideoPopup::init(EditorUI* editor) {
     m_mode = mod->getSavedValue<int>("mode", 0) == 1 ? gdx::PlayMode::Spawn : gdx::PlayMode::Toggle;
     m_gray = mod->getSavedValue<bool>("gray", false);
     m_chan = mod->getSavedValue<bool>("chan", false);
+    m_lag = mod->getSavedValue<bool>("lag", false);
     m_groupBase = std::max(this->maxUsedGroup() + 1, std::clamp(int(mod->getSettingValue<int>("first-group")), 1, 9000));
 
     auto put = [&](CCNode* n, float x, float y) { m_mainLayer->addChildAtPosition(n, Anchor::TopLeft, ccp(x, -y)); };
@@ -297,6 +298,8 @@ bool VideoPopup::init(EditorUI* editor) {
     chkLabel("Toggle (exacto)", 186.f, wlay::kChkRowB, 104.f);
     m_chkSpawn = chk(menu_selector(VideoPopup::onModeSpawn), m_mode == gdx::PlayMode::Spawn, 300.f, wlay::kChkRowB);
     chkLabel("Spawn (ligero)", 312.f, wlay::kChkRowB, 100.f);
+    m_chkLag = chk(menu_selector(VideoPopup::onLag), m_lag, 174.f, wlay::kChkRowC);
+    chkLabel("Partes anti-lag (Move)", 186.f, wlay::kChkRowC, 150.f);
 
     // ---- fila de botones: UNA sola fila (misma Y, misma altura, misma escala de texto)
     auto mkBtn = [&](char const* text, char const* frame, SEL_MenuHandler cb) {
@@ -344,26 +347,26 @@ int VideoPopup::maxTotal() const { return std::clamp(std::min(m_total, editorRoo
 
 // Frames que caben con `perFrame` objetos cada uno (6 = cota de triggers por frame) y sin pasarse de los 9999 grupos de GD
 // (hacen falta ~2 por frame: uno para sus objetos y otro para su paso de triggers).
-static int framesThatFit(int total, int palette, int perFrame, int groupBase) {
-    const int byObjects = std::max(1, (total - 16 - palette) / (perFrame + 6));
+static int framesThatFit(int total, int palette, int perFrame, int groupBase, bool lag) {
+    const int byObjects = std::max(1, (total - 16 - palette) / (perFrame + (lag ? 8 : 6)));      // 6 triggers por frame (+2 Move con anti-lag)
     const int byGroups = std::max(1, (kMaxGroup - groupBase - 4) / 2);
     return std::min(byObjects, byGroups);
 }
 
 // Duracion MAXIMA del deslizador (suelo absoluto de 40 obj/frame): se puede llegar lejos, aunque con calidad baja.
 double VideoPopup::maxLengthFit() const {
-    return double(framesThatFit(maxTotal(), paletteSize(), kHardMinPerFrame, m_groupBase)) / double(m_fps);
+    return double(framesThatFit(maxTotal(), paletteSize(), kHardMinPerFrame, m_groupBase, m_lag)) / double(m_fps);
 }
 
 // Duracion RECOMENDADA (con el minimo por frame de Ajustes): la que se propone al abrir un video.
 double VideoPopup::softLengthFit() const {
     const int minPer = std::clamp(int(Mod::get()->getSettingValue<int>("min-per-frame")), 30, 3000);
-    return double(framesThatFit(maxTotal(), paletteSize(), minPer, m_groupBase)) / double(m_fps);
+    return double(framesThatFit(maxTotal(), paletteSize(), minPer, m_groupBase, m_lag)) / double(m_fps);
 }
 
 int VideoPopup::perFrameEstimate() const {
     const int n = std::max(1, framesNow());
-    return std::max(0, int((long(maxTotal()) - gdx::videoTriggerBound(n, n) - paletteSize()) / n));
+    return std::max(0, int((long(maxTotal()) - gdx::videoTriggerBound(n, n) - (m_lag ? 2L * n : 0L) - paletteSize()) / n));
 }
 
 int VideoPopup::storeLong(int frames) const {
@@ -435,6 +438,7 @@ void VideoPopup::refreshLabels() {
     mod->setSavedValue<int>("mode", int(m_mode));
     mod->setSavedValue<bool>("gray", m_gray);
     mod->setSavedValue<bool>("chan", m_chan);
+    mod->setSavedValue<bool>("lag", m_lag);
 }
 
 void VideoPopup::setStatus(std::string const& a, std::string const& b, std::string const& note) {
@@ -503,6 +507,16 @@ void VideoPopup::onChan(CCObject*) {
     if (m_hasResult && !m_build) this->applyPreview(nullptr);
 }
 
+// Check "Partes anti-lag": los frames se reparten en partes de ~N objetos; solo una esta cerca de la camara (el resto espera lejos).
+void VideoPopup::onLag(CCObject*) {
+    m_lag = !m_lag;                            // en el callback el toggler aun no ha cambiado su estado
+    this->scheduleOnce(schedule_selector(VideoPopup::syncChecks), 0.f);
+    this->clampClip();                         // los Move cuentan como triggers del presupuesto
+    this->syncSliders();
+    this->refreshLabels();
+    if (m_hasResult && !m_build) this->applyPreview(nullptr);
+}
+
 void VideoPopup::setFps(int fps) {
     m_fps = fps;
     this->scheduleOnce(schedule_selector(VideoPopup::syncChecks), 0.f);
@@ -527,6 +541,7 @@ void VideoPopup::syncChecks(float) {
     m_chkSpawn->toggle(m_mode == gdx::PlayMode::Spawn);
     m_chkGray->toggle(m_gray);
     m_chkChan->toggle(m_chan);
+    m_chkLag->toggle(m_lag);
 }
 
 void VideoPopup::onSettings(CCObject*) { openSettingsPopup(Mod::get()); }
@@ -616,6 +631,7 @@ gdx::VideoPlanOptions VideoPopup::makePlanOptions() const {
     po.adaptive = mod->getSettingValue<bool>("adaptive");
     po.stabilizeTol = std::clamp(int(mod->getSettingValue<int>("stabilize")), 0, 20);
     po.extraObjects = paletteSize();           // los Color triggers de la paleta cuentan como objetos
+    po.lagMoves = m_lag;                       // 2 Move triggers por grupo de frames
     return po;
 }
 
@@ -837,6 +853,11 @@ void VideoPopup::onPlace(CCObject*) {
     job->info = m_info;
     job->fps = m_fps;
     job->chan = m_chan;
+    job->lag = m_lag;
+    job->lagParams.enable = m_lag;
+    job->lagParams.chunkObjects = std::clamp(int(mod->getSettingValue<int>("lag-chunk-objects")), 500, 200000);
+    job->lagParams.leadSeconds = std::clamp(mod->getSettingValue<double>("lag-lead"), 0.1, 3.0);
+    job->lagParams.farDistance = std::clamp(double(mod->getSettingValue<int>("lag-far")), 1500.0, 20000.0);
     job->paletteSize = std::max(8, paletteSize() ? paletteSize() : 128);
     job->method = method();
     job->po = makePlanOptions();
@@ -900,6 +921,7 @@ void VideoPopup::finishBuild(std::shared_ptr<BuildJob> job) {
     p.mode = m_mode;
     p.blockSeconds = std::clamp(mod->getSettingValue<double>("spawn-block"), 0.25, 4.0);
     if (job->chan) p.palette = job->palette;       // vacia = HSV
+    p.lag = job->lagParams;
     const CCPoint origin = placementOrigin();
     p.eo.originX = origin.x;
     p.eo.originY = origin.y;
@@ -913,7 +935,8 @@ void VideoPopup::finishBuild(std::shared_ptr<BuildJob> job) {
     }
 
     std::string err;
-    std::string str = gdx::buildVideoString(job->results, job->plan, p, &err);
+    gdx::LagInfo lagInfo;
+    std::string str = gdx::buildVideoString(job->results, job->plan, p, &err, &lagInfo);
     if (str.empty()) {
         showAlert("Video Importer", err.empty() ? std::string("No se pudo generar la animacion.") : err);
         this->applyPreview(nullptr);
@@ -929,10 +952,13 @@ void VideoPopup::finishBuild(std::shared_ptr<BuildJob> job) {
         return;
     }
     const auto S = gdx::scheduleVideo(job->plan, p.mode, nullptr, p.blockSeconds);
-    char msg[220];
-    std::snprintf(msg, sizeof msg, "Video colocado: %d frames (%d distintos), %zu objetos, grupos %d-%d | %s%s%s",
+    std::string lagText;
+    if (lagInfo.active) lagText = " | " + std::to_string(lagInfo.chunks) + " partes anti-lag";
+    else if (lagInfo.requested) lagText = " | anti-lag NO aplicado: " + lagInfo.note;
+    char msg[320];
+    std::snprintf(msg, sizeof msg, "Video colocado: %d frames (%d distintos), %zu objetos, grupos %d-%d | %s%s%s%s",
                   job->plan.frames, job->plan.groups(), count, p.baseGroup, p.baseGroup + std::max(0, S.groupsNeeded - 1),
-                  p.mode == gdx::PlayMode::Toggle ? "Toggle" : "Spawn", job->chan ? " | canales" : "", job->backend.empty() ? "" : (" | " + job->backend).c_str());
+                  p.mode == gdx::PlayMode::Toggle ? "Toggle" : "Spawn", job->chan ? " | canales" : "", lagText.c_str(), job->backend.empty() ? "" : (" | " + job->backend).c_str());
     this->startPlacement(str, count, msg);
     this->onClose(nullptr);
 }
@@ -948,6 +974,7 @@ void VideoPopup::onInfo(CCObject*) {
         "<cy>Spawn (ligero)</c>: los pasos se encadenan y se resincronizan cada segundo; la mitad de Spawn y sin pico al empezar cada vuelta.\n\n"
         "La animacion usa solo <cy>Toggle</c> y <cy>Spawn</c> triggers. El color va en <cy>HSV</c> dentro de cada objeto; con <cy>Canales</c> los objetos usan canales de color (2..) con una paleta unica para todo el video, fijada por Color triggers (uno por canal) al inicio del nivel: cadena mas corta, pero con menos colores (ver Ajustes). "
         "Los frames ocultos quedan <cg>desactivados</c> (sin lag). Los 2 triggers de arranque van en x=-30 y la animacion se repite <cg>para siempre</c>.\n\n"
+        "<cy>Partes anti-lag (Move)</c>: los frames se reparten en partes de ~25000 objetos (Ajustes). Solo una parte esta cerca de la camara; las demas esperan <cg>juntas y lejos</c> en X. Un <cy>Move</c> instantaneo trae la siguiente justo antes de que toque y otro la devuelve lejos al terminar. Menos objetos que GD tenga que recorrer al jugar (la carga del nivel no cambia). Usa Move triggers ademas de Toggle y Spawn.\n\n"
         "En el editor los frames se ven superpuestos: <cy>dale a jugar</c>. Con 400-500k objetos GD tarda en cargar y necesita un editor sin limite de objetos.\n\n"
         "No se puede deshacer: <cr>guarda antes</c>.",
         "OK"

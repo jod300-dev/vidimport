@@ -1,4 +1,5 @@
 # v1.0.0-beta
+- **Partes anti-lag**: los frames se reparten en partes; solo una esta cerca de la camara y las demas esperan lejos hasta que un Move las trae (ajustes: objetos por parte, anticipacion, distancia).
 - Casilla **Canales** (sin HSV): paleta unica para todo el video + Color triggers al inicio.
 - Los MP4 **fragmentados** ya se leen (antes: "No se pudo leer la duracion del video").
 - El deslizador de **Duracion** llega mucho mas lejos (40 obj/frame o 9999 grupos) con paso adaptativo; al abrir se propone la duracion con buena calidad y se avisa de calidad baja.

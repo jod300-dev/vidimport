@@ -37,6 +37,7 @@ struct VideoPlanOptions {
     double adaptiveSpread = 2.5;    // un grupo recibe entre 1/spread y spread veces la media
     int stabilizeTol = 5;           // 0 = sin estabilizar; dif. maxima (0-255) que se considera ruido
     int extraObjects = 0;           // objetos fijos ajenos a los frames (los Color triggers de la paleta en modo canales)
+    bool lagMoves = false;          // partes anti-lag: 2 Move triggers por grupo de frames
 };
 
 struct VideoPlan {
@@ -126,7 +127,7 @@ inline VideoPlan planVideo(const VideoClip& clip, const VideoPlanOptions& o) {
     const int U = p.groups();
     for (int i = 0; i < N; ++i) if (i == 0 || p.group[size_t(i)] != p.group[size_t(i - 1)]) ++p.events;
     if (U <= 1) p.events = 1;
-    p.triggerEstimate = U <= 1 ? 0 : videoTriggerBound(p.events, U);
+    p.triggerEstimate = U <= 1 ? 0 : videoTriggerBound(p.events, U) + (o.lagMoves ? 2L * U : 0L);
 
     // --- presupuesto
     const long room = std::max(0L, long(o.maxTotal) - p.triggerEstimate - long(o.extraObjects));
