@@ -858,6 +858,9 @@ void VideoPopup::onPlace(CCObject*) {
     job->lagParams.chunkObjects = std::clamp(int(mod->getSettingValue<int>("lag-chunk-objects")), 500, 200000);
     job->lagParams.leadSeconds = std::clamp(mod->getSettingValue<double>("lag-lead"), 0.1, 3.0);
     job->lagParams.farDistance = std::clamp(double(mod->getSettingValue<int>("lag-far")), 1500.0, 300000.0);
+    job->lagParams.spread = mod->getSettingValue<bool>("lag-spread");
+    job->lagParams.farStep = std::clamp(double(mod->getSettingValue<int>("lag-far-step")), 500.0, 200000.0);
+    job->lagParams.farMax = std::clamp(double(mod->getSettingValue<int>("lag-far-max")), 5000.0, 1000000.0);
     job->paletteSize = std::max(8, paletteSize() ? paletteSize() : 128);
     job->method = method();
     job->po = makePlanOptions();
@@ -959,6 +962,13 @@ void VideoPopup::finishBuild(std::shared_ptr<BuildJob> job) {
     std::snprintf(msg, sizeof msg, "Video colocado: %d frames (%d distintos), %zu objetos, grupos %d-%d | %s%s%s%s",
                   job->plan.frames, job->plan.groups(), count, p.baseGroup, p.baseGroup + std::max(0, S.groupsNeeded - 1),
                   p.mode == gdx::PlayMode::Toggle ? "Toggle" : "Spawn", job->chan ? " | canales" : "", lagText.c_str(), job->backend.empty() ? "" : (" | " + job->backend).c_str());
+    {   // resumen para el log de "Guardar log al jugar"
+        char sum[420];
+        std::snprintf(sum, sizeof sum, "%zu objetos, cadena %.1f MB, %d frames (%d distintos), grupos %d-%d, modo %s%s, anti-lag %s (%d partes, espera hasta x+%.0f%s)",
+                      count, double(str.size()) / (1024.0 * 1024.0), job->plan.frames, job->plan.groups(), p.baseGroup, p.baseGroup + std::max(0, S.groupsNeeded - 1),
+                      p.mode == gdx::PlayMode::Toggle ? "Toggle" : "Spawn", job->chan ? "+canales" : "", lagInfo.active ? "SI" : "no", lagInfo.chunks, lagInfo.farDist, p.lag.spread ? ", cada parte a distinta distancia" : "");
+        mod->setSavedValue<std::string>("last-placement", std::string(sum));
+    }
     this->startPlacement(str, count, msg);
     this->onClose(nullptr);
 }
@@ -975,6 +985,7 @@ void VideoPopup::onInfo(CCObject*) {
         "La animacion usa solo <cy>Toggle</c> y <cy>Spawn</c> triggers. El color va en <cy>HSV</c> dentro de cada objeto; con <cy>Canales</c> los objetos usan canales de color (2..) con una paleta unica para todo el video, fijada por Color triggers (uno por canal) al inicio del nivel: cadena mas corta, pero con menos colores (ver Ajustes). "
         "Los frames ocultos quedan <cg>desactivados</c> (sin lag). Los 2 triggers de arranque van en x=-30 y la animacion se repite <cg>para siempre</c>.\n\n"
         "<cy>Partes anti-lag (Move)</c>: los frames se reparten en partes de ~25000 objetos (Ajustes). Solo una parte esta cerca de la camara; las demas esperan <cg>juntas y lejos</c> en X. Un <cy>Move</c> instantaneo trae la siguiente justo antes de que toque y otro la devuelve lejos al terminar. Menos objetos que GD tenga que recorrer al jugar (la carga del nivel no cambia). Usa Move triggers ademas de Toggle y Spawn.\n\n"
+        "Si al jugar el nivel no entra: activa <cy>Guardar log al jugar</c> (Ajustes) y mira <cy>play-log.txt</c>; prueba tambien con ~190000 objetos totales.\n\n"
         "En el editor los frames se ven superpuestos: <cy>dale a jugar</c>. Con 400-500k objetos GD tarda en cargar y necesita un editor sin limite de objetos.\n\n"
         "No se puede deshacer: <cr>guarda antes</c>.",
         "OK"

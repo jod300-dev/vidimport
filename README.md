@@ -46,6 +46,8 @@ Con 400-500k objetos, aunque los frames ocultos esten desactivados, GD sigue ten
 
 Hay un Move por grupo de frames y por sentido, dentro de los pasos que ya existian (ningun grupo nuevo). Como los Move son **relativos**, los pasos que llevan Move se ejecutan una sola vez por vuelta (en modo Toggle no llevan la segunda ejecucion de reafirmacion). La parte que empieza la vuelta (y la que termina en la siguiente) se coloca en el origen; el resto, lejos: en el editor solo veras la primera parte.
 
+**Cada parte a distinta distancia** (ajuste *Anti-lag: cada parte a distinta distancia*, apagado por defecto): en vez de esperar todas juntas en el mismo punto lejano, la parte *k* espera a `distancia + k x paso` (cada Move lleva su propia distancia, y el Move de salida deshace exactamente el de entrada). El paso (30000 u por defecto) se reduce solo para que ninguna pase de la *distancia maxima* (300000 u). Probado en el simulador con 8, 37 y 168 partes: imagen identica, Move exactos y sin deriva.
+
 *Objetos por parte* es el control de todo: **25000** = pocos Move grandes; **~1 frame** (p. ej. 1000) = flujo continuo de Move pequenos, sin picos y con muy pocos objetos cerca de la camara.
 
 **Medido en el simulador de GD** (120k objetos, 20 s a 12 fps; imagen identica con y sin partes, 3 vueltas sin deriva, Toggle y Spawn, con lag de tick 1/60 y orden inverso):
@@ -58,6 +60,13 @@ Hay un Move por grupo de frames y por sentido, dentro de los pasos que ya existi
 | ~1 frame (500) | 4.882 (-96 %) | 1.510 |
 
 **Lo que NO esta verificado** (solo se puede ver en el juego): que reduzca de verdad el lag (es la hipotesis: GD recorre los objetos cercanos aunque esten desactivados), que un Move de 25k objetos instantaneo no de un tiron apreciable, y que GD mueva objetos cuya parte esta desactivada por Toggle (creo que si). La carga del nivel y la memoria no cambian. Los Move son un trigger mas que Toggle/Spawn. Si notas tirones al entrar una parte: sube *anticipacion*, baja *objetos por parte* o usa partes de ~1 frame.
+
+## Si al darle a Jugar el nivel no entra (te devuelve a la pagina del nivel)
+No tengo acceso a GD, asi que **no se la causa real**; esto es lo que haria, en orden:
+1. **Activa *Guardar log al jugar*** (Ajustes > Diagnostico, activado por defecto), intenta jugar y abre `play-log.txt` (Geode > este mod > carpeta de datos). Dice: tamano de la cadena del nivel, objetos, X maxima, si `PlayLayer::init` devolvio `false` o GD volvio a la pagina del nivel sin terminar de cargar, y el final del log de Geode. Si GD se cierra de golpe, lo anterior queda guardado (revisa tambien `geode/crashlogs`).
+2. **Prueba con menos objetos**: pon *Objetos totales* en ~190000 y vuelve a colocar. La sospecha mas fuerte es el limite de objetos de GD sin mods (~200000, dato de memoria sin verificar): si con 190k entra, el limite es ese y 400-500k solo sera jugable con un mod que lo quite.
+3. **Reduce el tamano del nivel**: el modo *Canales* da una cadena ~33 % mas corta (con 450k objetos la cadena sin comprimir pasa de 40 MB).
+4. Prueba *cada parte a distinta distancia* y una *distancia maxima* menor (p. ej. 100000), o desactiva el anti-lag, para descartar que las posiciones extremas en X influyan.
 
 ## Color: HSV o Canales
 - **HSV** (por defecto): cada objeto lleva su color en HSV sobre un canal base; 16 millones de colores, cero triggers de color.

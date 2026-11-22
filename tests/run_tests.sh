@@ -21,9 +21,10 @@ echo "== anti-lag (partes): imagen identica, objetos cerca de la camara, Move, d
 ffmpeg -v error -y -f lavfi -i mandelbrot=size=640x360:rate=12 -t 20 -c:v libx264 -pix_fmt yuv420p $W/m20.mp4
 for m in 0 1; do $W/lag $W/m20.mp4 12 $m 120000 15000 20 | tail -2; done
 $W/lag $W/m20.mp4 12 0 120000 500 20 | tail -2
+echo "-- partes a distinta distancia (paso 30000 y 10000):"; SPREAD=30000 $W/lag $W/m20.mp4 12 0 120000 15000 20 | grep -E "mitad|OK|FALLO"; SPREAD=10000 $W/lag $W/m20.mp4 12 1 120000 3000 20 | grep -E "mitad|OK|FALLO"
 echo "== yuv android"; g++ -std=c++20 -O1 -Indkmock -I$S -I$S/video -Wl,--unresolved-symbols=ignore-all yuv_android_test.cpp -o $W/yuv
 ffmpeg -v error -y -f lavfi -i color=c=0x3080C0:s=64x48:r=1 -frames:v 1 -vf "scale=out_color_matrix=bt709:out_range=tv,format=nv12" -f rawvideo $W/nv12.raw
 ffmpeg -v error -y -f rawvideo -pix_fmt nv12 -s 64x48 -i $W/nv12.raw -vf "scale=in_color_matrix=bt709:in_range=tv:out_range=pc,format=rgba" -f rawvideo $W/ref.rgba
 $W/yuv $W/nv12.raw $W/ref.rgba 64 48 1 2 0
-echo "== compilacion de la UI contra el mock"; g++ -std=c++23 -fsyntax-only -Imock -I$S -I$S/engine -I$S/video -Wall -Wextra -Wno-unused-parameter $S/ui/VideoPopup.cpp && echo "VideoPopup.cpp OK"
+echo "== compilacion de la UI contra el mock"; for f in $S/ui/VideoPopup.cpp $S/playlog.cpp; do g++ -std=c++23 -fsyntax-only -Dfar= -Dnear= -Imock -I$S -I$S/engine -I$S/video -Wall -Wextra -Wno-unused-parameter $f && echo "$f OK"; done
 rm -rf $W; echo "TODO OK"

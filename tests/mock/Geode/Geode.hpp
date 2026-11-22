@@ -64,7 +64,7 @@ struct CCArray : CCObject {
     void addObject(CCObject*) {}
 };
 template <class T> struct CCArrayExt { CCArrayExt(CCArray*) {} T* begin() { return nullptr; } T* end() { return nullptr; } };
-struct GameObject : CCNode { float getPositionX() { return 0; } float getPositionY() { return 0; } int m_groupCount = 0; };
+struct GameObject : CCNode { float getPositionX() { return 0; } float getPositionY() { return 0; } int m_groupCount = 0; int m_objectID = 0; };
 struct EffectGameObject : GameObject { int m_targetGroupID = 0, m_centerGroupID = 0; };
 template <class T, class U> T typeinfo_cast(U* u) { return dynamic_cast<T>(u); }
 struct EditorUI : CCNode { static EditorUI* get() { return nullptr; } CCArray* getSelectedObjects() { return nullptr; } void selectObjects(CCArray*, bool) {} };
@@ -100,7 +100,16 @@ struct Mod {
     template <class T> T getSettingValue(const char*) { return T{}; }
     template <class T> T getSavedValue(const char*, T d) { return d; }
     template <class T> void setSavedValue(const char*, T) {}
+    std::filesystem::path getSaveDir() { return "/tmp/x/y"; }
 };
 inline void openSettingsPopup(Mod*) {}
 namespace prelude { using namespace geode; }
 }
+
+// --- clases de GD para los hooks de playlog.cpp (solo las firmas que usa el mod)
+namespace gd { using string = std::string; }
+struct GJGameLevel : CCObject { gd::string m_levelName; gd::string m_levelString; };
+struct PlayLayer : CCNode { bool init(GJGameLevel*, bool, bool) { return true; } void setupHasCompleted() {} };
+struct LevelInfoLayer : CCNode { GJGameLevel* m_level = nullptr; bool init(GJGameLevel*, bool) { return true; } void onPlay(CCObject*) {} };
+struct EditorPauseLayer : CCNode { void onSaveAndPlay(CCObject*) {} };
+#define $modify(cls, base) cls : public base

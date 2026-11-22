@@ -79,6 +79,28 @@
       "name": "Anti-lag: distancia de espera (unidades)",
       "description": "A cuantas unidades en X esperan las partes que aun no tocan (30 unidades = 1 bloque; 30000 = 1000 bloques). Mas lejos = mas seguro de que no se vean ni entren en juego. Se agranda sola si el video es muy ancho. Si tu editor no admite objetos tan lejos, bajalo."
     },
+    "lag-spread": {
+      "type": "bool",
+      "default": false,
+      "name": "Anti-lag: cada parte a distinta distancia",
+      "description": "En vez de esperar TODAS juntas en el mismo punto lejano, la parte k espera a <cy>distancia + k x paso</c> (cada Move lleva su propia distancia). Asi no hay una montana de objetos apilados en una misma zona. El paso se reduce solo para que ninguna parte pase del <cy>maximo</c>."
+    },
+    "lag-far-step": {
+      "type": "int",
+      "default": 30000,
+      "min": 500,
+      "max": 200000,
+      "name": "Anti-lag: paso entre partes (unidades)",
+      "description": "Con <cy>cada parte a distinta distancia</c>: cuanto mas lejos que la anterior espera cada parte (30000 = 1000 bloques)."
+    },
+    "lag-far-max": {
+      "type": "int",
+      "default": 300000,
+      "min": 5000,
+      "max": 1000000,
+      "name": "Anti-lag: distancia maxima (unidades)",
+      "description": "Con <cy>cada parte a distinta distancia</c>: ninguna parte espera mas lejos que esto (el paso se reduce solo si hay muchas partes). Cuanto mas lejos, mas largo queda el nivel en X: si GD no carga el nivel, prueba a bajarlo."
+    },
     "first-group": {
       "type": "int",
       "default": 1,
@@ -213,6 +235,16 @@
       "default": false,
       "name": "Invertir giro",
       "description": "Solo si los rectangulos girados salen rotados al reves en tu version de GD."
+    },
+    "title-diag": {
+      "name": "Diagnostico",
+      "type": "title"
+    },
+    "play-log": {
+      "type": "bool",
+      "default": true,
+      "name": "Guardar log al jugar",
+      "description": "Si al jugar el nivel GD no entra y te devuelve a la pagina del nivel, esto guarda en <cy>play-log.txt</c> (carpeta de datos del mod) que paso: tamano del nivel, objetos, X maxima, si <cy>PlayLayer::init</c> fallo y el final del log de Geode. Se escribe al pulsar Jugar y Guardar y jugar."
     }
   },
   "tags": [

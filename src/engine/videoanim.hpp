@@ -62,6 +62,11 @@ struct LagParams {
     int chunkObjects = 25000;         // objetos por parte (una parte = frames consecutivos hasta sumar al menos esto; ~1 frame = flujo continuo)
     double leadSeconds = 0.5;         // el Move de entrada va tanto tiempo ANTES del primer frame de la parte
     double farDistance = 30000.0;     // unidades X a las que esperan (30000 = 1000 bloques; se agranda sola si el video es muy ancho)
+    // Cada parte a una distancia DISTINTA (parte k a farDistance + k * farStep) en vez de todas juntas en el mismo sitio. Asi no hay un monton
+    // de objetos apilados en una misma zona lejana. El paso se reduce solo para que ninguna parte pase de farMax.
+    bool spread = false;
+    double farStep = 30000.0;
+    double farMax = 300000.0;
     int objectIdMove = 901;
 };
 
@@ -145,7 +150,8 @@ struct ChunkPlan {
     std::vector<std::vector<int>> groups;     // por parte: indices de grupo de resultado (los de S.used)
     std::vector<int> inStep, outStep;         // evento (paso F_e) donde va el Move de entrada / salida de cada parte
     std::vector<char> startsNear;             // la parte empieza en el origen: su intervalo "cerca" cruza el inicio de la vuelta (entrada al final de la anterior o salida en la siguiente)
-    double farDist = 0;
+    std::vector<double> farOf;                // distancia de espera de CADA parte (todas iguales salvo con spread)
+    double farDist = 0;                       // la mayor
 };
 
 // Agrupa los grupos de frames en partes y decide en que paso entra y sale cada una. `objs[g]` = objetos del grupo g.
@@ -192,7 +198,16 @@ inline ChunkPlan planChunks(const VideoSchedule& S, const std::vector<size_t>& o
         if (tO - tI > total - 2.0 * step) { cp.note = "las partes no caben en la vuelta (video demasiado corto para este tamano de parte)"; cp.groups.clear(); return cp; }
         cp.groups.push_back(grp); cp.inStep.push_back(inE); cp.outStep.push_back(outE); cp.startsNear.push_back((wrapIn || wrapOut) ? 1 : 0);   // el intervalo "cerca" cruza el inicio de la vuelta: en regimen estable empieza cada vuelta cerca
     }
-    cp.farDist = std::max(lp.farDistance, 2.0 * imageWidthUnits + 1500.0);
+    const double base = std::max(lp.farDistance, 2.0 * imageWidthUnits + 1500.0);
+    const size_t K = cp.groups.size();
+    double stepU = 0.0;
+    if (lp.spread && K > 1) {
+        stepU = std::max(0.0, lp.farStep);
+        if (lp.farMax > base) stepU = std::min(stepU, (lp.farMax - base) / double(K - 1));   // la ultima parte no pasa de farMax
+        else stepU = 0.0;
+    }
+    for (size_t k = 0; k < K; ++k) cp.farOf.push_back(base + double(k) * stepU);
+    cp.farDist = cp.farOf.back() > cp.farOf.front() ? cp.farOf.back() : cp.farOf.front();
     cp.active = true;
     return cp;
 }
@@ -290,6 +305,7 @@ inline std::string buildVideoString(const std::vector<Result>& results, const Vi
     vdetail::ChunkPlan cp;
     LagInfo li; li.requested = p.lag.enable;
     std::vector<char> farGroup(size_t(U), 0);
+    std::vector<double> farOfGroup(size_t(U), 0.0);                          // distancia de espera de cada grupo (la de su parte)
     std::vector<std::vector<std::pair<int, double>>> movesAt(E);            // paso -> (grupo, dx)
     std::vector<char> stepHasMove(E, 0);
     if (p.lag.enable) {
@@ -301,9 +317,9 @@ inline std::string buildVideoString(const std::vector<Result>& results, const Vi
         if (cp.active) {
             for (size_t k = 0; k < cp.groups.size(); ++k) {
                 for (int g : cp.groups[k]) {
-                    if (!cp.startsNear[k]) farGroup[size_t(g)] = 1;
-                    movesAt[size_t(cp.inStep[k])].push_back({g, -cp.farDist});
-                    movesAt[size_t(cp.outStep[k])].push_back({g, +cp.farDist});
+                    if (!cp.startsNear[k]) { farGroup[size_t(g)] = 1; farOfGroup[size_t(g)] = cp.farOf[k]; }
+                    movesAt[size_t(cp.inStep[k])].push_back({g, -cp.farOf[k]});
+                    movesAt[size_t(cp.outStep[k])].push_back({g, +cp.farOf[k]});
                     li.moveTriggers += 2;
                 }
             }
@@ -323,7 +339,7 @@ inline std::string buildVideoString(const std::vector<Result>& results, const Vi
         const Result& r = results[size_t(g)];
         GdExportOptions eo = p.eo;
         eo.groupStr = std::to_string(G[size_t(g)]);
-        if (farGroup[size_t(g)]) eo.originX = p.eo.originX + cp.farDist;      // espera lejos hasta que su Move la traiga
+        if (farGroup[size_t(g)]) eo.originX = p.eo.originX + farOfGroup[size_t(g)];      // espera lejos hasta que su Move la traiga
         eo.zBase = zb[size_t(g)];
         eo.monoFastPath = false;
         if (!p.palette.empty()) {                                  // canal de cada color de ESTE grupo = canal global de la paleta

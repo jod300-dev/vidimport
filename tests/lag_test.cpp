@@ -8,6 +8,7 @@
 #include "gdsim.hpp"
 #include <cstdio>
 #include <cstdlib>
+#include <set>
 using namespace gdx;
 int main(int argc, char** argv) {
     std::string path = argv[1]; int fps = atoi(argv[2]); int mode = atoi(argv[3]); int maxTotal = atoi(argv[4]); int chunk = atoi(argv[5]); double len = atof(argv[6]);
@@ -31,6 +32,7 @@ int main(int argc, char** argv) {
     for (int lag = 0; lag < 2; ++lag) {
         VideoExportParams p; p.baseGroup = 100; p.eo.longSide = 600; p.mode = PlayMode(mode);
         p.palette = pal; p.lag.enable = lag == 1; p.lag.chunkObjects = chunk; p.lag.leadSeconds = lead;
+        if (getenv("SPREAD")) { p.lag.spread = true; p.lag.farStep = atof(getenv("SPREAD")); }
         std::string err; chains[lag] = buildVideoString(res, plan, p, &err, &li[lag]);
         if (chains[lag].empty()) { printf("FAIL %s\n", err.c_str()); return 1; }
     }
@@ -52,6 +54,11 @@ int main(int argc, char** argv) {
                 double t = rep * T;
                 for (int i = 0; i < plan.frames; ++i) {
                     Sm.run(t + 1e-4, so, rng);
+                    if (lag == 1 && variant == 0 && rep == 1 && i == plan.frames / 2) {            // reparto de distancias de las partes que esperan
+                        std::set<long> bands; double mn2 = 1e18, mx2 = -1e18;
+                        for (auto& ob : Sm.objs) if (ob.id == 3092 && ob.x > 5000) { bands.insert(long(std::lround(ob.x / 1000.0))); mn2 = std::min(mn2, ob.x); mx2 = std::max(mx2, ob.x); }
+                        printf("  (a mitad de vuelta) objetos en espera: x de %.0f a %.0f, %zu franjas de 1000 u distintas\n", mn2, mx2, bands.size());
+                    }
                     if (i == 0 && (rep == 1 || rep == 3)) { for (auto& ob : Sm.objs) snap[rep == 1 ? 0 : 1].push_back(ob.x); }
                     if (rep >= 1 && (i % 5 == 0)) {
                         long nr, na; Sm.nearCounts(0, 330.0 + 0.5 * 600, nr, na);

@@ -1,4 +1,6 @@
 # v1.0.0-beta
+- Ajuste **Guardar log al jugar**: escribe `play-log.txt` (tamano del nivel, objetos, X maxima, resultado de `PlayLayer::init`, final del log de Geode) al pulsar Jugar / Guardar y jugar y si GD vuelve a la pagina del nivel sin cargar.
+- Anti-lag: opcion **cada parte a distinta distancia** (paso y distancia maxima en Ajustes; cada Move con su distancia). Distancia de espera por defecto 30000.
 - **Partes anti-lag**: los frames se reparten en partes; solo una esta cerca de la camara y las demas esperan lejos hasta que un Move las trae (ajustes: objetos por parte, anticipacion, distancia).
 - Casilla **Canales** (sin HSV): paleta unica para todo el video + Color triggers al inicio.
 - Los MP4 **fragmentados** ya se leen (antes: "No se pudo leer la duracion del video").

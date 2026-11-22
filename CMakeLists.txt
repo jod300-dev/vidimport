@@ -25,6 +25,7 @@ endif()
 
 add_library(${PROJECT_NAME} SHARED
     src/main.cpp
+    src/playlog.cpp
     src/ui/VideoPopup.cpp
     ${VIDEO_SOURCES}
 )
