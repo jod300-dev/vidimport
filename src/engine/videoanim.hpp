@@ -87,10 +87,9 @@ struct VideoExportParams {
     int objectIdToggle = 1049;
     int objectIdSpawn = 1268;
     int gridCols = 80;                // los triggers van en una rejilla (paso 30 u): ninguno comparte celda con otro
-    // Area que ocupan los triggers: la rejilla base (gridCols columnas, las filas que salgan) se AMPLIA en estos bloques en X y en Y
-    // (1 bloque = 30 u). Las columnas extra ensanchan la rejilla y el paso vertical se agranda para que la altura crezca otro tanto.
+    // Los triggers van PEGADOS (paso 30 u en X e Y: uno al lado y uno encima del otro). La rejilla base de gridCols columnas se ENSANCHA en
+    // spreadXBlocks columnas mas; las filas crecen las que hagan falta (sin tope), asi que arriba tambien cabe todo.
     int spreadXBlocks = 50;
-    int spreadYBlocks = 50;
     // Correccion de velocidad: todos los tiempos (retardos de los Spawn, duracion de la vuelta) se multiplican por esto. 1 = exacto.
     // Si en tu GD la animacion dura MENOS que el video, sube el valor (p. ej. 1.05); si dura mas, bajalo.
     double timeScale = 1.0;
@@ -258,19 +257,13 @@ inline VideoSchedule scheduleVideo(const VideoPlan& plan, PlayMode mode, const s
 
 inline long videoTriggerCount(const VideoPlan& plan, PlayMode mode) { return scheduleVideo(plan, mode).triggers; }
 
-// Rejilla de los triggers: columnas, filas y paso (u) en X e Y. Parte de `baseCols` columnas y las filas que harian falta para `n` celdas;
-// luego suma `extraX` / `extraY` bloques (1 bloque = 30 u) al ANCHO y al ALTO. El paso en Y nunca baja de 30 u (ninguna celda comparte sitio).
+// Rejilla de los triggers: `baseCols + extraX` columnas, filas las que hagan falta para `n` celdas, SIEMPRE con paso 30 u (1 bloque) en X e Y:
+// los triggers quedan pegados, uno al lado y uno encima del otro, y ninguna celda se repite.
 struct TriggerGrid { int cols = 8; int rows = 1; double pitchX = 30.0, pitchY = 30.0; };
-inline TriggerGrid planTriggerGrid(long n, int baseCols, int extraX, int extraY) {
+inline TriggerGrid planTriggerGrid(long n, int baseCols, int extraX) {
     TriggerGrid g;
-    const int c0 = std::max(8, baseCols);
-    const long r0 = std::max(1L, (n + c0 - 1) / c0);
-    g.cols = c0 + std::max(0, extraX);
+    g.cols = std::max(8, baseCols) + std::max(0, extraX);
     g.rows = int(std::max(1L, (std::max(1L, n) + g.cols - 1) / g.cols));
-    g.pitchX = 30.0;
-    // alto (entre la primera y la ultima fila) = alto base (r0 - 1 filas de 30 u) + extraY bloques
-    const double spanU = (double(r0 - 1) + double(std::max(0, extraY))) * 30.0;
-    g.pitchY = g.rows > 1 ? std::max(30.0, spanU / double(g.rows - 1)) : 30.0;
     return g;
 }
 
@@ -386,7 +379,7 @@ inline std::string buildVideoString(const std::vector<Result>& results, const Vi
     const double left = std::max(p.eo.originX - sz.w * 0.5, p.trigX + 60.0), bottom = p.eo.originY + sz.h * 0.5 + 90.0;
     // celdas de la rejilla = triggers de los pasos (sin los 2 de arranque ni los Color triggers, que van aparte); cota por arriba
     const long gridCells = std::max(1L, S.triggers - 2 + li.moveTriggers);
-    const TriggerGrid grid = planTriggerGrid(gridCells, p.gridCols, p.spreadXBlocks, p.spreadYBlocks);
+    const TriggerGrid grid = planTriggerGrid(gridCells, p.gridCols, p.spreadXBlocks);
     int cell = 0;
     auto at = [&](double& x, double& y) { x = left + double(cell % grid.cols) * grid.pitchX; y = bottom + double(cell / grid.cols) * grid.pitchY; ++cell; };
     double x, y;

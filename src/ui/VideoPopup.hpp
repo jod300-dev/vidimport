@@ -130,7 +130,7 @@ protected:
 
     int m_method = 0;                      // indice en la lista de metodos de la ventana (0 = BSP)
     int m_groupBase = 1;                   // primer grupo libre del nivel (para el limite de 9999 grupos)
-    int m_total = 450000;                  // objetos totales
+    int m_total = 1000000;                  // objetos totales
     int m_sizeU = 600;                     // lado largo, unidades GD
     double m_start = 0;                    // s
     double m_length = 5;                   // s

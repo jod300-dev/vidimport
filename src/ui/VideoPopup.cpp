@@ -207,7 +207,7 @@ bool VideoPopup::init(EditorUI* editor) {
     this->setTitle("Video Importer (beta)");
 
     auto* mod = Mod::get();
-    const int settingMax = std::clamp(int(mod->getSettingValue<int>("max-total-objects")), 5000, 500000);
+    const int settingMax = std::clamp(int(mod->getSettingValue<int>("max-total-objects")), 5000, 1000000);
     m_method = std::clamp(mod->getSavedValue<int>("method", 0), 0, kMethodCount - 1);
     m_total = std::clamp(mod->getSavedValue<int>("total", settingMax), totalMin(settingMax), settingMax);
     m_sizeU = std::clamp(mod->getSavedValue<int>("size-u", 600), kMinSize, kMaxSize);
@@ -344,7 +344,7 @@ int VideoPopup::paletteSize() const {
     return m_chan ? std::clamp(int(Mod::get()->getSettingValue<int>("palette-size")), 8, gdx::kVideoMaxPalette) : 0;
 }
 
-int VideoPopup::maxTotal() const { return std::clamp(std::min(m_total, editorRoom()), 500, 500000); }
+int VideoPopup::maxTotal() const { return std::clamp(std::min(m_total, editorRoom()), 500, 1000000); }
 
 // Frames que caben con `perFrame` objetos cada uno (6 = cota de triggers por frame) y sin pasarse de los 9999 grupos de GD
 // (hacen falta ~2 por frame: uno para sus objetos y otro para su paso de triggers).
@@ -391,7 +391,7 @@ void VideoPopup::clampClip() {
 
 void VideoPopup::syncSliders() {
     auto* mod = Mod::get();
-    const int settingMax = std::clamp(int(mod->getSettingValue<int>("max-total-objects")), 5000, 500000);
+    const int settingMax = std::clamp(int(mod->getSettingValue<int>("max-total-objects")), 5000, 1000000);
     m_totalSlider->setValue(totalToSlider(m_total, settingMax));
     if (!m_haveVideo) return;
     const double dur = m_info.duration;
@@ -459,7 +459,7 @@ void VideoPopup::stepMethod(int dir) {
 }
 
 void VideoPopup::onTotalSlider(CCObject* sender) {
-    const int settingMax = std::clamp(int(Mod::get()->getSettingValue<int>("max-total-objects")), 5000, 500000);
+    const int settingMax = std::clamp(int(Mod::get()->getSettingValue<int>("max-total-objects")), 5000, 1000000);
     const int v = sliderToTotal(static_cast<SliderThumb*>(sender)->getValue(), settingMax);
     if (v == m_total) return;
     m_total = v;
@@ -930,7 +930,6 @@ void VideoPopup::finishBuild(std::shared_ptr<BuildJob> job) {
     p.blockSeconds = std::clamp(mod->getSettingValue<double>("spawn-block"), 0.25, 4.0);
     p.timeScale = std::clamp(mod->getSettingValue<double>("time-scale"), 0.5, 2.0);
     p.spreadXBlocks = std::clamp(int(mod->getSettingValue<int>("trigger-spread-x")), 0, 500);
-    p.spreadYBlocks = std::clamp(int(mod->getSettingValue<int>("trigger-spread-y")), 0, 500);
     if (job->chan) p.palette = job->palette;       // vacia = HSV
     p.lag = job->lagParams;
     const CCPoint origin = placementOrigin();
@@ -986,7 +985,7 @@ void VideoPopup::onInfo(CCObject*) {
         "Video Importer (beta)",
         "Elige un <cy>MP4</c> (H.264 funciona siempre; HEVC/VP9/AV1 dependen de tu sistema). Cada frame se convierte en objetos con el <cy>metodo</c> elegido y va en su propio <cy>grupo</c>.\n\n"
         "- <cg>12 fps / 30 fps</c>: a cuantos fotogramas por segundo se muestrea el video. 12 = mas objetos por frame y videos mas largos; 30 = mas fluido.\n"
-        "- <cg>Objetos totales</c>: presupuesto de TODA la animacion (por defecto 450000). Se reparte entre los frames segun su detalle; los frames casi iguales se reutilizan.\n"
+        "- <cg>Objetos totales</c>: presupuesto de TODA la animacion (hasta 1000000; por defecto 1000000). Se reparte entre los frames segun su detalle; los frames casi iguales se reutilizan.\n"
         "- <cg>Inicio / Duracion</c>: el tramo del video (hasta 500 s). La duracion maxima sale ademas del tope de objetos y de los 9999 grupos de GD. El bucle dura exactamente lo que el tramo; si en tu GD va mas rapido o lento, usa <cy>Correccion de velocidad</c> en Ajustes.\n\n"
         "<cy>Toggle (exacto)</c>: un Spawn por paso con su instante absoluto; la animacion no se desincroniza nunca.\n"
         "<cy>Spawn (ligero)</c>: los pasos se encadenan y se resincronizan cada segundo; la mitad de Spawn y sin pico al empezar cada vuelta.\n\n"

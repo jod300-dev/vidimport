@@ -30,7 +30,7 @@ struct VideoClip {
 };
 
 struct VideoPlanOptions {
-    int maxTotal = 450000;          // tope de objetos totales (triggers incluidos)
+    int maxTotal = 1000000;          // tope de objetos totales (triggers incluidos)
     int minPerFrame = 150;          // objetos minimos por grupo: por debajo el frame sale irreconocible
     bool dedupe = true;
     double dedupePsnr = 40.0;       // dB

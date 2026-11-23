@@ -25,15 +25,15 @@
     },
     "max-total-objects": {
       "type": "int",
-      "default": 450000,
+      "default": 1000000,
       "min": 5000,
-      "max": 500000,
+      "max": 1000000,
       "name": "Tope total de objetos",
-      "description": "Objetos maximos de TODA la animacion (frames + triggers). El video se reparte entre ellos. Por defecto <cy>450000</c>. Es el valor por defecto del deslizador de la ventana."
+      "description": "Objetos maximos de TODA la animacion (frames + triggers). El video se reparte entre ellos. Hasta <cy>1000000</c> (1 millon); por defecto <cy>1000000</c>. Es el valor por defecto del deslizador de la ventana."
     },
     "editor-object-limit": {
       "type": "int",
-      "default": 500000,
+      "default": 1000000,
       "min": 50000,
       "max": 1000000,
       "name": "Limite de objetos del editor",
@@ -68,16 +68,8 @@
       "default": 50,
       "min": 0,
       "max": 500,
-      "name": "Triggers: ampliar en X (bloques)",
-      "description": "Bloques que se AÑADEN al ancho de la zona donde se colocan los triggers (rejilla base de 80 bloques). Mas ancho = menos triggers apilados en un mismo sitio."
-    },
-    "trigger-spread-y": {
-      "type": "int",
-      "default": 50,
-      "min": 0,
-      "max": 500,
-      "name": "Triggers: ampliar en Y (bloques)",
-      "description": "Bloques que se AÑADEN al alto de la zona donde se colocan los triggers. El espacio entre filas se agranda para que la zona crezca esos bloques."
+      "name": "Triggers: columnas extra (bloques)",
+      "description": "Columnas que se SUMAN a la rejilla base de 80 de triggers (50 = 130 columnas, pegados a 1 bloque, y las filas suben las que hagan falta). Mas ancho = menos filas en Y."
     },
     "lag-chunk-objects": {
       "type": "int",

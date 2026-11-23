@@ -1,7 +1,7 @@
 // Prueba de TIEMPO y de la REJILLA DE TRIGGERS (sin ffmpeg: frames sinteticos).
 //   - la duracion del bucle es la del tramo de video (no N/fps) a 12 y a 30 fps: Spawn(M, total) y el ultimo paso caben en `total`
 //   - el simulador de GD ve cada frame en su instante exacto (t_k = k/fps * escala) y el bucle se relanza a los `total` s
-//   - la rejilla de triggers ocupa 50 bloques mas en X y en Y que la base y ninguna celda se repite
+//   - la rejilla de triggers es densa (paso 30 u), 50 columnas mas ancha que la base, y ninguna celda se repite
 #include "../src/video/videosource.hpp"
 #include "../src/engine/videoanim.hpp"
 #include "gdsim.hpp"
@@ -55,12 +55,12 @@ int main() {
             // 3) rejilla: ancho y alto ampliados 50 bloques (1500 u) respecto a la rejilla base de 80 columnas
             const double w = maxX - minX, h = maxY - minY;
             const long cellsN = nTrig;
-            const TriggerGrid g0 = planTriggerGrid(cellsN, 80, 0, 0), g1 = planTriggerGrid(cellsN, 80, 50, 50);
+            const TriggerGrid g0 = planTriggerGrid(cellsN, 80, 0), g1 = planTriggerGrid(cellsN, 80, 50);
             const double baseW = (g0.cols - 1) * 30.0, baseH = (std::min<long>(cellsN, long(g0.cols) * g0.rows) > 0 ? double(g0.rows - 1) * 30.0 : 0);
             const bool uniq = cells.size() == size_t(nTrig);
             printf("fps=%d escala=%.2f %s: bucle=%.4f s (esperado %.4f) %s | frame/instante mal: %d | triggers=%ld ancho=%.0f u (base %.0f) alto=%.0f u (base %.0f; cols %d filas %d pasoY %.1f) %s\n",
                    fps, scale, mode ? "Spawn " : "Toggle", loopDelay, want, tOk ? "OK" : "FALLO", wrong, nTrig, w, baseW, h, baseH, g1.cols, g1.rows, g1.pitchY, uniq ? "celdas unicas" : "CELDAS REPETIDAS");
-            if (!tOk || wrong > 0 || !uniq || w < baseW + 50 * 30.0 - 1.0 || (g1.rows > 1 && h < baseH + 50 * 30.0 - 1.0)) ++bad;
+            if (!tOk || wrong > 0 || !uniq || w < baseW + 50 * 30.0 - 1.0 || g1.pitchY != 30.0 || g1.pitchX != 30.0) ++bad;
         }
     }
     printf(bad ? "FALLO\n" : "OK\n");
