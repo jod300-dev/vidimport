@@ -1,3 +1,7 @@
+# v1.0.3-beta
+- **Nuevo check "Remap (mini)"**, el metodo mas ligero. Una unica plantilla de 4 Toggle (mostrar 1 + ocultar 3, con 4 grupos "pin" sin objetos) se reutiliza con **remap de Spawn** (clave 442): M lanza `Spawn(plantilla, t, "pin.G_e.pin.G_a...")` por paso. Casi **1 trigger y 1 grupo por frame** (Toggle/Spawn: ~6 y 2): con los 9999 grupos de GD caben ~9990 frames (**500 s a 12 fps**, ~333 s a 30 fps) y sobran ~80 % de triggers para la imagen (en las pruebas: 338 -> 71 triggers). Instantes absolutos como Toggle (una sola ejecucion por paso) y el mismo `Spawn(M, duracion)`.
+- **El anti-lag sigue funcionando con Remap**: cada parte tiene un grupo propio y UN Move de entrada y UNO de salida mueven la parte entera (los frames llevan 2 grupos: el suyo y el de su parte). Mismas distancias, lead y "cada parte a distinta distancia".
+
 # v1.0.2-beta
 - **Duracion hasta 500 s**: el deslizador de *Duracion* llega ahora hasta 500 s (antes lo frenaba solo el presupuesto). Sigue limitado por los **9999 grupos** de GD (hacen falta ~2 por frame): a 12 fps caben ~415 s y a 30 fps ~166 s; la nota de la ventana dice cual de los dos topes te frena.
 - **El bucle dura EXACTAMENTE lo que el MP4**, a 12 y a 30 fps: antes la vuelta duraba `frames / fps` (se perdia hasta 1 frame por vuelta, p. ej. 10.03 s -> 10.00 s) y el numero de frames se truncaba. Ahora el numero de frames se redondea al mas cercano y `Spawn(M, total)` usa la duracion real del tramo; el ultimo frame dura lo que reste.

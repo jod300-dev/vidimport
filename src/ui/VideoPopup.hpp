@@ -17,7 +17,7 @@ using namespace geode::prelude;
 
 // Ventana del importador de video (430x290):
 //   izquierda: vista previa del primer frame convertido + estado
-//   derecha: metodo, objetos totales, lado largo, inicio y duracion; checks 12/30 fps, Toggle/Spawn y grises
+//   derecha: metodo, objetos totales, lado largo, inicio y duracion; checks 12/30 fps, Toggle/Spawn/Remap y grises
 class VideoPopup : public geode::Popup {
 public:
     static VideoPopup* create(EditorUI* editor);
@@ -82,6 +82,7 @@ protected:
     void onFps30(CCObject*) { setFps(30); }
     void onModeToggle(CCObject*) { setMode(gdx::PlayMode::Toggle); }
     void onModeSpawn(CCObject*) { setMode(gdx::PlayMode::Spawn); }
+    void onModeRemap(CCObject*) { setMode(gdx::PlayMode::Remap); }
     void onGray(CCObject*);
     void onChan(CCObject*);
     void onLag(CCObject*);
@@ -151,6 +152,7 @@ protected:
     CCMenuItemToggler* m_chk30 = nullptr;
     CCMenuItemToggler* m_chkToggle = nullptr;
     CCMenuItemToggler* m_chkSpawn = nullptr;
+    CCMenuItemToggler* m_chkRemap = nullptr;
     CCMenuItemToggler* m_chkGray = nullptr;
     CCMenuItemToggler* m_chkChan = nullptr;
     CCMenuItemToggler* m_chkLag = nullptr;

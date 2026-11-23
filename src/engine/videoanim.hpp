@@ -16,7 +16,13 @@
 //                           constante por frame (sin pico al empezar la vuelta). Si GD pierde un Spawn la cadena se repara sola
 //                           en el siguiente segundo.
 //
-//  En los dos modos MOSTRAR/OCULTAR es un TOGGLE absoluto (clave 56: 1 = activar, 0 = desactivar): los frames ocultos quedan
+//   REMAP (ultra ligero)    Un UNICO grupo plantilla T con 4 Toggle (mostrar 1 + ocultar 3) cuyos objetivos son 4 grupos "pin" sin objetos. M lanza
+//                           Spawn(T, t_e, REMAP) por paso (clave 442: "pin.G_e.pin.G_a..."): GD sustituye los pines por los grupos de ese paso.
+//                           Casi 1 grupo y 1 trigger por frame (los otros modos: 2 grupos y ~6 triggers) -> mas frames y mas segundos
+//                           con los 9999 grupos de GD. Instantes ABSOLUTOS como Toggle (una sola ejecucion por paso). El anti-lag funciona:
+//                           cada parte lleva ademas un grupo propio C_k y UN Move (entrada/salida) mueve la parte entera.
+//
+//  En los modos Toggle/Spawn MOSTRAR/OCULTAR es un TOGGLE absoluto (clave 56: 1 = activar, 0 = desactivar): los frames ocultos quedan
 //  DESACTIVADOS (GD ni los dibuja ni los procesa) en vez de seguir dibujandose con opacidad 0 -> sin lag.
 //
 //  ANTI-LAG (opcional, "partes"): los frames se agrupan en PARTES de ~N objetos (p. ej. 25000). Solo UNA parte (o dos, un instante) esta
@@ -41,7 +47,7 @@
 
 namespace gdx {
 
-enum class PlayMode : int { Toggle = 0, Spawn = 1 };
+enum class PlayMode : int { Toggle = 0, Spawn = 1, Remap = 2 };
 
 namespace detail {
 // Mueve la parte de triggers (out[objEnd..]) delante de los objetos (out[0..objEnd)). Ambas partes terminan en ';'.
@@ -106,7 +112,7 @@ struct VideoSchedule {
     std::vector<VEvent> ev;           // pasos del bucle (cambios de grupo), ordenados por t
     double total = 0;                 // duracion de la vuelta (s)
     std::vector<int> used;            // grupos que se muestran en algun paso (orden creciente)
-    int groupsNeeded = 0;             // G + F + M + I0
+    int groupsNeeded = 0;             // G + F + M + I0   (Remap: G + plantilla + 4 pines + M + I0; las partes anti-lag suman 3 por parte)
     long triggers = 0;                // cantidad EXACTA de triggers
     bool still = false;               // un solo grupo: imagen fija, sin triggers
 };
@@ -127,6 +133,18 @@ inline void spawn(std::string& s, const VideoExportParams& p, double x, double y
     head(s, p.objectIdSpawn, x, y);
     s += ",51,"; s += std::to_string(target);
     if (delay > 0) { s += ",63,"; detail::appendNum(s, delay, 4); }
+    if (own > 0) { s += ",62,1,87,1,57,"; s += std::to_string(own); }
+    s += ';';
+}
+// Spawn con REMAP (clave 442): GD sustituye en el grupo lanzado los IDs `a` por `b` ("a.b.a.b"). Solo los pares con b > 0.
+inline void spawnRemap(std::string& s, const VideoExportParams& p, double x, double y, int target, double delay, const std::vector<std::pair<int, int>>& rm, int own) {
+    head(s, p.objectIdSpawn, x, y);
+    s += ",51,"; s += std::to_string(target);
+    if (delay > 0) { s += ",63,"; detail::appendNum(s, delay, 4); }
+    if (!rm.empty()) {
+        s += ",442,";
+        for (size_t i = 0; i < rm.size(); ++i) { if (i) s += '.'; s += std::to_string(rm[i].first); s += '.'; s += std::to_string(rm[i].second); }
+    }
     if (own > 0) { s += ",62,1,87,1,57,"; s += std::to_string(own); }
     s += ';';
 }
@@ -236,6 +254,11 @@ inline VideoSchedule scheduleVideo(const VideoPlan& plan, PlayMode mode, const s
     s.used.assign(u.begin(), u.end());
     const size_t E = s.ev.size();
     if (E <= 1) { s.still = true; s.groupsNeeded = 0; s.triggers = 0; return s; }
+    if (mode == PlayMode::Remap) {                                                        // plantilla (4 Toggle) + 1 Spawn por paso + I0 en lotes de 3 + Spawn(M) + 2 de arranque
+        s.triggers = 4 + long(E) + (long(s.used.size()) + 1) / 3 + 1 + 2;
+        s.groupsNeeded = int(s.used.size()) + 4 + 1 + 2;                                  // G + 4 pines + plantilla + M + I0
+        return s;
+    }
     long trig = 0;
     for (size_t e = 0; e < E; ++e) trig += 1 + long(vdetail::hideSet(s.ev, e).size());   // toggles de cada paso
     trig += long(s.used.size()) - 1;                                                      // I0
@@ -256,6 +279,9 @@ inline VideoSchedule scheduleVideo(const VideoPlan& plan, PlayMode mode, const s
 }
 
 inline long videoTriggerCount(const VideoPlan& plan, PlayMode mode) { return scheduleVideo(plan, mode).triggers; }
+
+// Triggers que suma el anti-lag en modo Remap: por parte, Spawn+Move de entrada y Spawn+Move de salida.
+constexpr long kRemapLagTriggersPerChunk = 4;
 
 // Rejilla de los triggers: `baseCols + extraX` columnas, filas las que hagan falta para `n` celdas, SIEMPRE con paso 30 u (1 bloque) en X e Y:
 // los triggers quedan pegados, uno al lado y uno encima del otro, y ninguna celda se repite.
@@ -314,8 +340,11 @@ inline std::string buildVideoString(const std::vector<Result>& results, const Vi
     int next = p.baseGroup;
     std::vector<int> G(size_t(U), 0);
     for (int g : S.used) G[size_t(g)] = next++;
+    const bool remap = p.mode == PlayMode::Remap;
     std::vector<int> F(E, 0);
-    for (size_t e = 0; e < E; ++e) F[e] = next++;
+    int T = 0; int pin[4] = {0, 0, 0, 0};
+    if (remap) { T = next++; for (int k = 0; k < 4; ++k) pin[k] = next++; }                 // plantilla + 4 pines (grupos sin objetos)
+    else for (size_t e = 0; e < E; ++e) F[e] = next++;
     const int M = next++, I0 = next++;
 
     // ---- partes anti-lag
@@ -325,6 +354,8 @@ inline std::string buildVideoString(const std::vector<Result>& results, const Vi
     std::vector<double> farOfGroup(size_t(U), 0.0);                          // distancia de espera de cada grupo (la de su parte)
     std::vector<std::vector<std::pair<int, double>>> movesAt(E);            // paso -> (grupo, dx)
     std::vector<char> stepHasMove(E, 0);
+    std::vector<int> chunkOfGroup(size_t(U), -1);                           // Remap: parte (0..K-1) de cada grupo de frames
+    std::vector<int> Cg, MVin, MVout;                                       // Remap: grupo de cada parte y grupos de sus Move de entrada / salida
     if (p.lag.enable) {
         std::vector<size_t> objs(size_t(U), 0);
         for (int g : S.used) objs[size_t(g)] = results[size_t(g)].shapes.size();
@@ -335,10 +366,16 @@ inline std::string buildVideoString(const std::vector<Result>& results, const Vi
             for (size_t k = 0; k < cp.groups.size(); ++k) {
                 for (int g : cp.groups[k]) {
                     if (!cp.startsNear[k]) { farGroup[size_t(g)] = 1; farOfGroup[size_t(g)] = cp.farOf[k]; }
+                    if (remap) { chunkOfGroup[size_t(g)] = int(k); continue; }             // Remap: un Move por PARTE (grupo propio C_k), no por grupo de frames
                     movesAt[size_t(cp.inStep[k])].push_back({g, -cp.farOf[k]});
                     movesAt[size_t(cp.outStep[k])].push_back({g, +cp.farOf[k]});
                     li.moveTriggers += 2;
                 }
+            }
+            if (remap) {
+                for (size_t k = 0; k < cp.groups.size(); ++k) { Cg.push_back(next++); MVin.push_back(next++); MVout.push_back(next++); }
+                li.moveTriggers = kRemapLagTriggersPerChunk * long(cp.groups.size());
+                if (next - 1 > 9999) return fail("No quedan grupos libres suficientes para las partes anti-lag (max. 9999)");
             }
             for (size_t e = 0; e < E; ++e) stepHasMove[e] = movesAt[e].empty() ? 0 : 1;
         }
@@ -356,6 +393,7 @@ inline std::string buildVideoString(const std::vector<Result>& results, const Vi
         const Result& r = results[size_t(g)];
         GdExportOptions eo = p.eo;
         eo.groupStr = std::to_string(G[size_t(g)]);
+        if (remap && chunkOfGroup[size_t(g)] >= 0) { eo.groupStr += '.'; eo.groupStr += std::to_string(Cg[size_t(chunkOfGroup[size_t(g)])]); }   // grupo de la parte (un Move la mueve entera)
         if (farGroup[size_t(g)]) eo.originX = p.eo.originX + farOfGroup[size_t(g)];      // espera lejos hasta que su Move la traiga
         eo.zBase = zb[size_t(g)];
         eo.monoFastPath = false;
@@ -384,39 +422,67 @@ inline std::string buildVideoString(const std::vector<Result>& results, const Vi
     auto at = [&](double& x, double& y) { x = left + double(cell % grid.cols) * grid.pitchX; y = bottom + double(cell / grid.cols) * grid.pitchY; ++cell; };
     double x, y;
 
-    // maestro M
-    if (p.mode == PlayMode::Toggle) {
-        const double rd = vdetail::reassert(plan.fps);
-        for (size_t e = 0; e < E; ++e) { at(x, y); vdetail::spawn(out, p, x, y, F[e], S.ev[e].t, M); }
-        for (size_t e = 0; e < E; ++e) {                                                                         // segunda ejecucion (idempotente)
-            if (stepHasMove[e]) continue;                                                                         // ...salvo en los pasos con Move: es RELATIVO y se aplicaria dos veces
-            at(x, y); vdetail::spawn(out, p, x, y, F[e], S.ev[e].t + rd, M);
+    if (remap) {
+        // M: un Spawn(T, t_e, remap) por paso: pin0 -> grupo que se muestra, pin1..3 -> los que se ocultan (los pines sin mapear no tocan nada)
+        for (size_t e = 0; e < E; ++e) {
+            std::vector<std::pair<int, int>> rm; rm.push_back({pin[0], G[size_t(S.ev[e].group)]});
+            const std::vector<int> hs = vdetail::hideSet(S.ev, e);
+            for (size_t h = 0; h < hs.size() && h < 3; ++h) rm.push_back({pin[1 + h], G[size_t(hs[h])]});
+            at(x, y); vdetail::spawnRemap(out, p, x, y, T, S.ev[e].t, rm, M);
+        }
+        // anti-lag: por parte, Spawn(grupo del Move) en el paso de entrada / salida + el Move en su grupo (1 Move mueve la parte entera)
+        for (size_t k = 0; k < Cg.size(); ++k) {
+            at(x, y); vdetail::spawn(out, p, x, y, MVin[k], S.ev[size_t(cp.inStep[k])].t, M);
+            at(x, y); vdetail::spawn(out, p, x, y, MVout[k], S.ev[size_t(cp.outStep[k])].t, M);
+            at(x, y); vdetail::move(out, p, x, y, Cg[k], -cp.farOf[k], 0.0, MVin[k]);
+            at(x, y); vdetail::move(out, p, x, y, Cg[k], +cp.farOf[k], 0.0, MVout[k]);
+        }
+        at(x, y); vdetail::spawn(out, p, x, y, M, S.total, M);                                                     // la vuelta se relanza sola
+        // plantilla T: mostrar pin0 y ocultar pin1..3
+        at(x, y); vdetail::toggle(out, p, x, y, pin[0], 1, T);
+        for (int k = 1; k < 4; ++k) { at(x, y); vdetail::toggle(out, p, x, y, pin[k], 0, T); }
+        // inicio I0 (una sola vez): la plantilla en lotes de 3 oculta todo menos el primer frame (pin0 -> primer frame: se queda mostrado)
+        std::vector<int> toHide; for (int g : S.used) if (g != S.ev[0].group) toHide.push_back(g);
+        for (size_t i = 0; i < toHide.size(); i += 3) {
+            std::vector<std::pair<int, int>> rm; rm.push_back({pin[0], G[size_t(S.ev[0].group)]});
+            for (size_t j = 0; j < 3 && i + j < toHide.size(); ++j) rm.push_back({pin[1 + j], G[size_t(toHide[i + j])]});
+            at(x, y); vdetail::spawnRemap(out, p, x, y, T, 0.0, rm, I0);
         }
     } else {
-        const double bs = std::max(0.05, p.blockSeconds);
-        long lastBlock = -1;
-        for (size_t e = 0; e < E; ++e) {
-            const long b = long(std::floor(S.ev[e].t / bs + 1e-9));
-            if (b != lastBlock) { lastBlock = b; at(x, y); vdetail::spawn(out, p, x, y, F[e], S.ev[e].t, M); }     // cabeza del bloque: instante absoluto
-        }
-    }
-    at(x, y); vdetail::spawn(out, p, x, y, M, S.total, M);                                                         // la vuelta se relanza sola
-
-    // pasos F_e
-    {
-        const double bs = std::max(0.05, p.blockSeconds);
-        for (size_t e = 0; e < E; ++e) {
-            at(x, y); vdetail::toggle(out, p, x, y, G[size_t(S.ev[e].group)], 1, F[e]);                            // primero MOSTRAR el nuevo
-            for (int h : vdetail::hideSet(S.ev, e)) { at(x, y); vdetail::toggle(out, p, x, y, G[size_t(h)], 0, F[e]); }
-            for (auto& mv : movesAt[e]) { at(x, y); vdetail::move(out, p, x, y, G[size_t(mv.first)], mv.second, 0.0, F[e]); }     // anti-lag: parte que entra / sale
-            if (p.mode == PlayMode::Spawn && e + 1 < E) {
-                const long b0 = long(std::floor(S.ev[e].t / bs + 1e-9)), b1 = long(std::floor(S.ev[e + 1].t / bs + 1e-9));
-                if (b0 == b1) { at(x, y); vdetail::spawn(out, p, x, y, F[e + 1], S.ev[e + 1].t - S.ev[e].t, F[e]); }  // encadenar con el paso siguiente
+        // maestro M
+        if (p.mode == PlayMode::Toggle) {
+            const double rd = vdetail::reassert(plan.fps);
+            for (size_t e = 0; e < E; ++e) { at(x, y); vdetail::spawn(out, p, x, y, F[e], S.ev[e].t, M); }
+            for (size_t e = 0; e < E; ++e) {                                                                         // segunda ejecucion (idempotente)
+                if (stepHasMove[e]) continue;                                                                         // ...salvo en los pasos con Move: es RELATIVO y se aplicaria dos veces
+                at(x, y); vdetail::spawn(out, p, x, y, F[e], S.ev[e].t + rd, M);
+            }
+        } else {
+            const double bs = std::max(0.05, p.blockSeconds);
+            long lastBlock = -1;
+            for (size_t e = 0; e < E; ++e) {
+                const long b = long(std::floor(S.ev[e].t / bs + 1e-9));
+                if (b != lastBlock) { lastBlock = b; at(x, y); vdetail::spawn(out, p, x, y, F[e], S.ev[e].t, M); }     // cabeza del bloque: instante absoluto
             }
         }
+        at(x, y); vdetail::spawn(out, p, x, y, M, S.total, M);                                                         // la vuelta se relanza sola
+
+        // pasos F_e
+        {
+            const double bs = std::max(0.05, p.blockSeconds);
+            for (size_t e = 0; e < E; ++e) {
+                at(x, y); vdetail::toggle(out, p, x, y, G[size_t(S.ev[e].group)], 1, F[e]);                            // primero MOSTRAR el nuevo
+                for (int h : vdetail::hideSet(S.ev, e)) { at(x, y); vdetail::toggle(out, p, x, y, G[size_t(h)], 0, F[e]); }
+                for (auto& mv : movesAt[e]) { at(x, y); vdetail::move(out, p, x, y, G[size_t(mv.first)], mv.second, 0.0, F[e]); }     // anti-lag: parte que entra / sale
+                if (p.mode == PlayMode::Spawn && e + 1 < E) {
+                    const long b0 = long(std::floor(S.ev[e].t / bs + 1e-9)), b1 = long(std::floor(S.ev[e + 1].t / bs + 1e-9));
+                    if (b0 == b1) { at(x, y); vdetail::spawn(out, p, x, y, F[e + 1], S.ev[e + 1].t - S.ev[e].t, F[e]); }  // encadenar con el paso siguiente
+                }
+            }
+        }
+        // inicio I0 (una sola vez): oculta todo menos el primer frame
+        for (int g : S.used) if (g != S.ev[0].group) { at(x, y); vdetail::toggle(out, p, x, y, G[size_t(g)], 0, I0); }
     }
-    // inicio I0 (una sola vez): oculta todo menos el primer frame
-    for (int g : S.used) if (g != S.ev[0].group) { at(x, y); vdetail::toggle(out, p, x, y, G[size_t(g)], 0, I0); }
     // arranque (triggers de posicion), apilados a la izquierda
     vdetail::spawn(out, p, p.trigX, bottom, M, 0, 0);
     vdetail::spawn(out, p, p.trigX, bottom + 30.0, I0, 0, 0);

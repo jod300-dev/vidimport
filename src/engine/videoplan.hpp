@@ -38,7 +38,9 @@ struct VideoPlanOptions {
     double adaptiveSpread = 2.5;    // un grupo recibe entre 1/spread y spread veces la media
     int stabilizeTol = 5;           // 0 = sin estabilizar; dif. maxima (0-255) que se considera ruido
     int extraObjects = 0;           // objetos fijos ajenos a los frames (los Color triggers de la paleta en modo canales)
-    bool lagMoves = false;          // partes anti-lag: 2 Move triggers por grupo de frames
+    bool lagMoves = false;          // partes anti-lag: 2 Move triggers por grupo de frames (en modo Remap: 4 triggers por PARTE)
+    bool remap = false;             // modo Remap: ~1 trigger por paso (la plantilla de 4 Toggle se reutiliza con remap)
+    int lagChunkObjects = 25000;    // objetos por parte anti-lag (para acotar cuantas partes habra en modo Remap)
 };
 
 struct VideoPlan {
@@ -62,6 +64,9 @@ struct VideoPlan {
 
 // Cota de triggers de una animacion con `events` pasos y `groups` grupos de frames (vale para Toggle y Spawn).
 inline long videoTriggerBound(int events, int groups) { return long(events) * 6 + long(groups) + 16; }
+// Cota en modo Remap: 1 Spawn(plantilla) por paso + I0 en lotes de 3 + plantilla y arranque; con anti-lag, 4 triggers por parte
+// (como mucho maxTotal / objetos_por_parte + 2 partes).
+inline long videoTriggerBoundRemap(int events, int groups, long lagChunks = 0) { return long(events) + long(groups) / 3 + 16 + 4L * lagChunks; }
 
 namespace vdetail {
 
@@ -135,7 +140,9 @@ inline VideoPlan planVideo(const VideoClip& clip, const VideoPlanOptions& o) {
     const int U = p.groups();
     for (int i = 0; i < N; ++i) if (i == 0 || p.group[size_t(i)] != p.group[size_t(i - 1)]) ++p.events;
     if (U <= 1) p.events = 1;
-    p.triggerEstimate = U <= 1 ? 0 : videoTriggerBound(p.events, U) + (o.lagMoves ? 2L * U : 0L);
+    if (U <= 1) p.triggerEstimate = 0;
+    else if (o.remap) p.triggerEstimate = videoTriggerBoundRemap(p.events, U, o.lagMoves ? long(o.maxTotal / std::max(1, o.lagChunkObjects)) + 2 : 0L);
+    else p.triggerEstimate = videoTriggerBound(p.events, U) + (o.lagMoves ? 2L * U : 0L);
 
     // --- presupuesto
     const long room = std::max(0L, long(o.maxTotal) - p.triggerEstimate - long(o.extraObjects));

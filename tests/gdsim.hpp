@@ -45,7 +45,9 @@ struct Sim {
     std::map<int, std::array<uint8_t,3>> chColor;       // canal -> color (de Color triggers)
     std::map<int, int> opacity;                          // grupo -> 0/1
     std::map<int, std::vector<int>> trigsIn;             // grupo -> indices de triggers (alpha/spawn) spawn-triggered
-    struct Ev { double t; long seq; int obj; };
+    struct Ev { double t; long seq; int obj; int rm = 0; };   // rm: indice en `rms` (0 = sin remap)
+    std::vector<std::map<int, int>> rms{std::map<int, int>{}};   // remaps activos (de las claves 442 de los Spawn)
+    static int rmap(const std::map<int, int>& m, int g) { auto it = m.find(g); return it == m.end() ? g : it->second; }
     struct Cmp { bool operator()(const Ev& a, const Ev& b) const { return a.t > b.t || (a.t == b.t && a.seq > b.seq); } };
     std::priority_queue<Ev, std::vector<Ev>, Cmp> q; long seq = 0;
     std::map<int, std::vector<int>> members;            // grupo -> indices de objetos (para Move)
@@ -103,7 +105,8 @@ struct Sim {
                 std::vector<Ev> next;
                 for (const Ev& e : batch) {
                     const Obj& ob = objs[size_t(e.obj)];
-                    int target = int(ob.geti(51));
+                    const std::map<int, int>& rmCur = rms[size_t(e.rm)];
+                    int target = rmap(rmCur, int(ob.geti(51)));                                          // el remap entrante sustituye el objetivo
                     const bool spawnTriggered = ob.has(62);
                     if (ob.id == 1007 || ob.id == 1049) {
                         if (spawnTriggered && opt.dropAlpha > 0 && U(rng) < opt.dropAlpha) continue;     // este Alpha / Toggle se pierde
@@ -123,7 +126,13 @@ struct Sim {
                         const bool selfLoop = std::find(ob.groups.begin(), ob.groups.end(), target) != ob.groups.end();   // Spawn(L, total): no se pierde
                         if (spawnTriggered && !selfLoop && opt.dropSpawn > 0 && U(rng) < opt.dropSpawn) continue;
                         double d = ob.geti(63, 0);
-                        for (int ti : trigsIn[target]) { if (d <= 1e-9) next.push_back({e.t, seq++, ti}); else q.push({e.t + d, seq++, ti}); }
+                        int rmIdx = e.rm;
+                        if (ob.has(442)) {                                                                   // remap propio: los pares se aplican sobre el remap entrante
+                            std::map<int, int> nm = rmCur; std::vector<int> v; { std::stringstream rs(ob.kv.at(442)); std::string t; while (std::getline(rs, t, '.')) v.push_back(std::stoi(t)); }
+                            for (size_t i = 0; i + 1 < v.size(); i += 2) nm[v[i]] = rmap(rmCur, v[i + 1]);
+                            rms.push_back(std::move(nm)); rmIdx = int(rms.size()) - 1;
+                        }
+                        for (int ti : trigsIn[target]) { if (d <= 1e-9) next.push_back({e.t, seq++, ti, rmIdx}); else q.push({e.t + d, seq++, ti, rmIdx}); }
                     }
                 }
                 batch = std::move(next);

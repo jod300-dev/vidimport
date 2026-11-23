@@ -30,6 +30,9 @@ El bucle dura lo que el tramo de video (no `frames / fps`): el numero de frames 
 ## Zona de los triggers
 Los triggers van pegados, con paso de 1 bloque (30 u) en X e Y: uno al lado y uno encima del otro. La rejilla base de 80 columnas se ensancha 50 columnas (130; ajuste *Triggers: columnas extra*) y las filas suben las que hagan falta, sin tope.
 
+## Modo Remap (mini)
+Tercer check de reproduccion (junto a Toggle y Spawn). En vez de un grupo y ~6 triggers por paso, hay UNA plantilla de 4 Toggle cuyos objetivos son 4 grupos "pin" sin objetos, y cada paso es un solo `Spawn(plantilla, t, remap)` (clave 442, formato `pin.grupo.pin.grupo`) que sustituye los pines por los grupos de ese paso. Resultado: ~1 grupo y ~1 trigger por frame, instantes absolutos (como Toggle). Con anti-lag cada parte lleva un grupo propio (los objetos tienen 2 grupos) y un Move de entrada/salida la mueve entera. El simulador de `tests/gdsim.hpp` entiende el remap y las pruebas e2e / anti-lag / tiempo lo ejecutan en los 3 modos.
+
 ## 12 fps / 30 fps
 El video se muestrea en `t = inicio + k / fps` eligiendo el frame decodificado **mas cercano** (igual que el filtro `fps` de ffmpeg). Con el mismo presupuesto, 12 fps da ~2,5 veces mas objetos por frame y videos ~2,5 veces mas largos; 30 fps es mas fluido.
 

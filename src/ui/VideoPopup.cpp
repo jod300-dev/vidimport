@@ -212,7 +212,10 @@ bool VideoPopup::init(EditorUI* editor) {
     m_total = std::clamp(mod->getSavedValue<int>("total", settingMax), totalMin(settingMax), settingMax);
     m_sizeU = std::clamp(mod->getSavedValue<int>("size-u", 600), kMinSize, kMaxSize);
     m_fps = mod->getSavedValue<int>("fps", 12) == 30 ? 30 : 12;
-    m_mode = mod->getSavedValue<int>("mode", 0) == 1 ? gdx::PlayMode::Spawn : gdx::PlayMode::Toggle;
+    {
+        const int sm = mod->getSavedValue<int>("mode", 0);
+        m_mode = sm == 1 ? gdx::PlayMode::Spawn : sm == 2 ? gdx::PlayMode::Remap : gdx::PlayMode::Toggle;
+    }
     m_gray = mod->getSavedValue<bool>("gray", false);
     m_chan = mod->getSavedValue<bool>("chan", false);
     m_lag = mod->getSavedValue<bool>("lag", false);
@@ -276,7 +279,7 @@ bool VideoPopup::init(EditorUI* editor) {
     m_startSlider->setValue(0.f);
     m_lenSlider->setValue(1.f);
 
-    // checks (fila A: fps y grises; fila B: modo de reproduccion). 12/30 y Toggle/Spawn son excluyentes (ver syncChecks)
+    // checks (fila A: fps y grises; fila B: modo de reproduccion). 12/30 y Toggle/Spawn/Remap son excluyentes (ver syncChecks)
     auto chk = [&](SEL_MenuHandler cb, bool on, float x, float y) {
         auto c = CCMenuItemToggler::createWithStandardSprites(this, cb, wlay::kChkSize);
         c->toggle(on);
@@ -296,9 +299,11 @@ bool VideoPopup::init(EditorUI* editor) {
     m_chkChan = chk(menu_selector(VideoPopup::onChan), m_chan, 348.f, wlay::kChkRowA);
     chkLabel("Canales", 360.f, wlay::kChkRowA, 56.f);
     m_chkToggle = chk(menu_selector(VideoPopup::onModeToggle), m_mode == gdx::PlayMode::Toggle, 174.f, wlay::kChkRowB);
-    chkLabel("Toggle (exacto)", 186.f, wlay::kChkRowB, 104.f);
-    m_chkSpawn = chk(menu_selector(VideoPopup::onModeSpawn), m_mode == gdx::PlayMode::Spawn, 300.f, wlay::kChkRowB);
-    chkLabel("Spawn (ligero)", 312.f, wlay::kChkRowB, 100.f);
+    chkLabel("Toggle (exacto)", 186.f, wlay::kChkRowB, 74.f);
+    m_chkSpawn = chk(menu_selector(VideoPopup::onModeSpawn), m_mode == gdx::PlayMode::Spawn, 262.f, wlay::kChkRowB);
+    chkLabel("Spawn (ligero)", 274.f, wlay::kChkRowB, 70.f);
+    m_chkRemap = chk(menu_selector(VideoPopup::onModeRemap), m_mode == gdx::PlayMode::Remap, 346.f, wlay::kChkRowB);
+    chkLabel("Remap (mini)", 358.f, wlay::kChkRowB, 64.f);
     m_chkLag = chk(menu_selector(VideoPopup::onLag), m_lag, 174.f, wlay::kChkRowC);
     chkLabel("Partes anti-lag (Move)", 186.f, wlay::kChkRowC, 150.f);
 
@@ -348,7 +353,14 @@ int VideoPopup::maxTotal() const { return std::clamp(std::min(m_total, editorRoo
 
 // Frames que caben con `perFrame` objetos cada uno (6 = cota de triggers por frame) y sin pasarse de los 9999 grupos de GD
 // (hacen falta ~2 por frame: uno para sus objetos y otro para su paso de triggers).
-static int framesThatFit(int total, int palette, int perFrame, int groupBase, bool lag) {
+// Modo Remap: ~1 trigger y ~1 grupo por frame (la plantilla de Toggle se reutiliza); el anti-lag suma 4 triggers y 3 grupos por PARTE (pocas).
+static int framesThatFit(int total, int palette, int perFrame, int groupBase, bool lag, bool remap = false) {
+    if (remap) {
+        const int chunks = lag ? total / 25000 + 2 : 0;                                              // cota de partes anti-lag
+        const int byObjects = std::max(1, (total - 40 - palette - 4 * chunks) / (perFrame + 1));      // 1 Spawn por frame
+        const int byGroups = std::max(1, kMaxGroup - groupBase - 12 - 3 * chunks);                   // ~1 grupo por frame
+        return std::min(byObjects, byGroups);
+    }
     const int byObjects = std::max(1, (total - 16 - palette) / (perFrame + (lag ? 8 : 6)));      // 6 triggers por frame (+2 Move con anti-lag)
     const int byGroups = std::max(1, (kMaxGroup - groupBase - 4) / 2);
     return std::min(byObjects, byGroups);
@@ -356,17 +368,19 @@ static int framesThatFit(int total, int palette, int perFrame, int groupBase, bo
 
 // Duracion MAXIMA del deslizador (suelo absoluto de 40 obj/frame): se puede llegar lejos, aunque con calidad baja.
 double VideoPopup::maxLengthFit() const {
-    return std::min(kMaxLengthSec, double(framesThatFit(maxTotal(), paletteSize(), kHardMinPerFrame, m_groupBase, m_lag)) / double(m_fps));
+    return std::min(kMaxLengthSec, double(framesThatFit(maxTotal(), paletteSize(), kHardMinPerFrame, m_groupBase, m_lag, m_mode == gdx::PlayMode::Remap)) / double(m_fps));
 }
 
 // Duracion RECOMENDADA (con el minimo por frame de Ajustes): la que se propone al abrir un video.
 double VideoPopup::softLengthFit() const {
     const int minPer = std::clamp(int(Mod::get()->getSettingValue<int>("min-per-frame")), 30, 3000);
-    return std::min(kMaxLengthSec, double(framesThatFit(maxTotal(), paletteSize(), minPer, m_groupBase, m_lag)) / double(m_fps));
+    return std::min(kMaxLengthSec, double(framesThatFit(maxTotal(), paletteSize(), minPer, m_groupBase, m_lag, m_mode == gdx::PlayMode::Remap)) / double(m_fps));
 }
 
 int VideoPopup::perFrameEstimate() const {
     const int n = std::max(1, framesNow());
+    if (m_mode == gdx::PlayMode::Remap)
+        return std::max(0, int((long(maxTotal()) - gdx::videoTriggerBoundRemap(n, n, m_lag ? long(maxTotal() / 25000) + 2 : 0L) - paletteSize()) / n));
     return std::max(0, int((long(maxTotal()) - gdx::videoTriggerBound(n, n) - (m_lag ? 2L * n : 0L) - paletteSize()) / n));
 }
 
@@ -528,9 +542,12 @@ void VideoPopup::setFps(int fps) {
 }
 
 void VideoPopup::setMode(gdx::PlayMode m) {
-    m_mode = m;
+    m_mode = m;                                // Remap usa ~1 grupo y ~1 trigger por frame: cambia hasta donde llega la duracion
     this->scheduleOnce(schedule_selector(VideoPopup::syncChecks), 0.f);
+    this->clampClip();
+    this->syncSliders();
     this->refreshLabels();
+    this->scheduleRecompute();
 }
 
 // El CCMenuItemToggler cambia su estado DESPUES de llamar al callback: sin esto, pulsar la casilla ya marcada la dejaria desmarcada
@@ -540,6 +557,7 @@ void VideoPopup::syncChecks(float) {
     m_chk30->toggle(m_fps == 30);
     m_chkToggle->toggle(m_mode == gdx::PlayMode::Toggle);
     m_chkSpawn->toggle(m_mode == gdx::PlayMode::Spawn);
+    m_chkRemap->toggle(m_mode == gdx::PlayMode::Remap);
     m_chkGray->toggle(m_gray);
     m_chkChan->toggle(m_chan);
     m_chkLag->toggle(m_lag);
@@ -632,7 +650,9 @@ gdx::VideoPlanOptions VideoPopup::makePlanOptions() const {
     po.adaptive = mod->getSettingValue<bool>("adaptive");
     po.stabilizeTol = std::clamp(int(mod->getSettingValue<int>("stabilize")), 0, 20);
     po.extraObjects = paletteSize();           // los Color triggers de la paleta cuentan como objetos
-    po.lagMoves = m_lag;                       // 2 Move triggers por grupo de frames
+    po.lagMoves = m_lag;                       // 2 Move triggers por grupo de frames (Remap: 4 por parte)
+    po.remap = m_mode == gdx::PlayMode::Remap;
+    po.lagChunkObjects = std::clamp(int(mod->getSettingValue<int>("lag-chunk-objects")), 500, 200000);
     return po;
 }
 
@@ -726,7 +746,7 @@ void VideoPopup::applyPreview(std::shared_ptr<PreviewJob> job) {
     if (pf < minPer) note = "Calidad baja (" + std::to_string(pf) + " obj/frame): acorta la duracion, usa 12 fps o sube el tope. " + note;
     else if (m_length >= fit - 1e-6 && fit < m_info.duration - m_start - 1e-6) {
         if (fit >= kMaxLengthSec - 1e-6) note = "Duracion limitada a 500 s. " + note;
-        else note = "Duracion limitada por el tope de objetos o de grupos de GD (9999; hacen falta ~2 por frame: a 12 fps cabe mas que a 30). " + note;
+        else note = std::string("Duracion limitada por el tope de objetos o de grupos de GD (9999). ") + (m_mode == gdx::PlayMode::Remap ? "Remap usa ~1 grupo por frame. " : "Con Toggle/Spawn hacen falta ~2 por frame: prueba Remap. ") + note;
     }
     this->setStatus(a, b, note);
 }
@@ -967,13 +987,13 @@ void VideoPopup::finishBuild(std::shared_ptr<BuildJob> job) {
     else if (lagInfo.requested) lagText = " | anti-lag NO aplicado: " + lagInfo.note;
     char msg[320];
     std::snprintf(msg, sizeof msg, "Video colocado: %.2f s, %d frames (%d distintos), %zu objetos, grupos %d-%d | %s%s%s%s",
-                  job->plan.seconds(), job->plan.frames, job->plan.groups(), count, p.baseGroup, p.baseGroup + std::max(0, S.groupsNeeded - 1),
-                  p.mode == gdx::PlayMode::Toggle ? "Toggle" : "Spawn", job->chan ? " | canales" : "", lagText.c_str(), job->backend.empty() ? "" : (" | " + job->backend).c_str());
+                  job->plan.seconds(), job->plan.frames, job->plan.groups(), count, p.baseGroup, p.baseGroup + std::max(0, S.groupsNeeded + (p.mode == gdx::PlayMode::Remap && lagInfo.active ? 3 * lagInfo.chunks : 0) - 1),
+                  (p.mode == gdx::PlayMode::Toggle ? "Toggle" : p.mode == gdx::PlayMode::Remap ? "Remap" : "Spawn"), job->chan ? " | canales" : "", lagText.c_str(), job->backend.empty() ? "" : (" | " + job->backend).c_str());
     {   // resumen para el log de "Guardar log al jugar"
         char sum[640];
         std::snprintf(sum, sizeof sum, "bucle %.3f s (escala x%.3f, M se relanza a los %.3f s), %zu objetos, cadena %.1f MB, %d frames (%d distintos), grupos %d-%d, modo %s%s, anti-lag %s (%d partes, espera hasta x+%.0f%s)",
-                      job->plan.seconds(), p.timeScale, S.total, count, double(str.size()) / (1024.0 * 1024.0), job->plan.frames, job->plan.groups(), p.baseGroup, p.baseGroup + std::max(0, S.groupsNeeded - 1),
-                      p.mode == gdx::PlayMode::Toggle ? "Toggle" : "Spawn", job->chan ? "+canales" : "", lagInfo.active ? "SI" : "no", lagInfo.chunks, lagInfo.farDist, p.lag.spread ? ", cada parte a distinta distancia" : "");
+                      job->plan.seconds(), p.timeScale, S.total, count, double(str.size()) / (1024.0 * 1024.0), job->plan.frames, job->plan.groups(), p.baseGroup, p.baseGroup + std::max(0, S.groupsNeeded + (p.mode == gdx::PlayMode::Remap && lagInfo.active ? 3 * lagInfo.chunks : 0) - 1),
+                      (p.mode == gdx::PlayMode::Toggle ? "Toggle" : p.mode == gdx::PlayMode::Remap ? "Remap" : "Spawn"), job->chan ? "+canales" : "", lagInfo.active ? "SI" : "no", lagInfo.chunks, lagInfo.farDist, p.lag.spread ? ", cada parte a distinta distancia" : "");
         mod->setSavedValue<std::string>("last-placement", std::string(sum));
     }
     this->startPlacement(str, count, msg);
@@ -988,7 +1008,8 @@ void VideoPopup::onInfo(CCObject*) {
         "- <cg>Objetos totales</c>: presupuesto de TODA la animacion (hasta 1000000; por defecto 1000000). Se reparte entre los frames segun su detalle; los frames casi iguales se reutilizan.\n"
         "- <cg>Inicio / Duracion</c>: el tramo del video (hasta 500 s). La duracion maxima sale ademas del tope de objetos y de los 9999 grupos de GD. El bucle dura exactamente lo que el tramo; si en tu GD va mas rapido o lento, usa <cy>Correccion de velocidad</c> en Ajustes.\n\n"
         "<cy>Toggle (exacto)</c>: un Spawn por paso con su instante absoluto; la animacion no se desincroniza nunca.\n"
-        "<cy>Spawn (ligero)</c>: los pasos se encadenan y se resincronizan cada segundo; la mitad de Spawn y sin pico al empezar cada vuelta.\n\n"
+        "<cy>Spawn (ligero)</c>: los pasos se encadenan y se resincronizan cada segundo; la mitad de Spawn y sin pico al empezar cada vuelta.\n"
+        "<cy>Remap (mini)</c>: el metodo mas ligero. Una sola plantilla de 4 Toggle que se reutiliza con <cy>remap</c> en un Spawn por paso (instantes absolutos como Toggle): ~1 trigger y ~1 grupo por frame en vez de ~6 y 2. Caben mas frames y videos mas largos con los 9999 grupos de GD (hasta 500 s a 12 fps). Funciona con las partes anti-lag.\n\n"
         "La animacion usa solo <cy>Toggle</c> y <cy>Spawn</c> triggers. El color va en <cy>HSV</c> dentro de cada objeto; con <cy>Canales</c> los objetos usan canales de color (2..) con una paleta unica para todo el video, fijada por Color triggers (uno por canal) al inicio del nivel: cadena mas corta, pero con menos colores (ver Ajustes). "
         "Los frames ocultos quedan <cg>desactivados</c> (sin lag). Los 2 triggers de arranque van en x=-30 y la animacion se repite <cg>para siempre</c>.\n\n"
         "<cy>Partes anti-lag (Move)</c>: los frames se reparten en partes de ~25000 objetos (Ajustes). Solo una parte esta cerca de la camara; las demas esperan <cg>juntas y lejos</c> en X. Un <cy>Move</c> instantaneo trae la siguiente justo antes de que toque y otro la devuelve lejos al terminar. Menos objetos que GD tenga que recorrer al jugar (la carga del nivel no cambia). Usa Move triggers ademas de Toggle y Spawn.\n\n"

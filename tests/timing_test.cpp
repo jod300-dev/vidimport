@@ -25,7 +25,7 @@ int main() {
         VideoPlan plan = planVideo(clip, po);
         Options o; o.quality = 0; o.maxRaster = 96;
         auto res = convertVideo(clip, plan, Method::BSP, o, nullptr, 1);
-        for (int mode = 0; mode < 2; ++mode) {
+        for (int mode = 0; mode < 3; ++mode) {
             VideoExportParams p; p.baseGroup = 100; p.eo.longSide = 600; p.mode = PlayMode(mode); p.timeScale = scale;
             std::string err; const std::string chain = buildVideoString(res, plan, p, &err);
             if (chain.empty()) { printf("FAIL %s\n", err.c_str()); return 1; }
@@ -59,7 +59,7 @@ int main() {
             const double baseW = (g0.cols - 1) * 30.0, baseH = (std::min<long>(cellsN, long(g0.cols) * g0.rows) > 0 ? double(g0.rows - 1) * 30.0 : 0);
             const bool uniq = cells.size() == size_t(nTrig);
             printf("fps=%d escala=%.2f %s: bucle=%.4f s (esperado %.4f) %s | frame/instante mal: %d | triggers=%ld ancho=%.0f u (base %.0f) alto=%.0f u (base %.0f; cols %d filas %d pasoY %.1f) %s\n",
-                   fps, scale, mode ? "Spawn " : "Toggle", loopDelay, want, tOk ? "OK" : "FALLO", wrong, nTrig, w, baseW, h, baseH, g1.cols, g1.rows, g1.pitchY, uniq ? "celdas unicas" : "CELDAS REPETIDAS");
+                   fps, scale, mode == 2 ? "Remap " : (mode ? "Spawn " : "Toggle"), loopDelay, want, tOk ? "OK" : "FALLO", wrong, nTrig, w, baseW, h, baseH, g1.cols, g1.rows, g1.pitchY, uniq ? "celdas unicas" : "CELDAS REPETIDAS");
             if (!tOk || wrong > 0 || !uniq || w < baseW + 50 * 30.0 - 1.0 || g1.pitchY != 30.0 || g1.pitchX != 30.0) ++bad;
         }
     }
