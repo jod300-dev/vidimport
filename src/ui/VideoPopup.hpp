@@ -92,7 +92,7 @@ protected:
     void syncChecks(float = 0.f);                    // los toggles cambian DESPUES del callback: se fuerzan al estado real (casillas excluyentes)
     void stepMethod(int dir);
     void loadVideo(std::string const& path);
-    void clampClip();                                // acota inicio / duracion al video y al presupuesto
+    void clampClip(bool fitToTotal = false);         // acota inicio / duracion al video y al presupuesto; sin fitToTotal SUBE el total si la duracion lo necesita
     void syncSliders();
     void refreshLabels();
     void scheduleRecompute();
@@ -110,6 +110,7 @@ protected:
     int storeLong(int frames) const;                 // lado largo con el que se guardan los frames (baja solo si hay muchos)
     int framesNow() const;
     int paletteSize() const;                         // colores de la paleta global (ajuste); 0 si el check de canales esta apagado
+    int totalCeiling() const;                        // total maximo posible: el del ajuste y lo que cabe en el editor (NO el del deslizador)
     int maxTotal() const;                            // tope efectivo: ajuste/deslizador y lo que cabe en el editor
     int editorRoom() const;
     double maxLengthFit() const;                     // duracion MAXIMA del deslizador (suelo absoluto de objetos por frame y limite de grupos)

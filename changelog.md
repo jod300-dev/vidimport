@@ -1,3 +1,8 @@
+# v1.0.4-beta
+- **El maximo del deslizador de Duracion ya no depende del deslizador "Objetos totales"** (por eso se quedaba en ~216 s a 12 fps y ~166 s a 30 fps): ahora llega hasta lo que permiten los 9999 grupos de GD y el techo de objetos (ajuste y editor), con un tope de 500 s. Si la duracion que eliges necesita mas objetos, el total **sube solo** (hasta ese techo) para mantener los obj/frame minimos; si bajas el total a mano, la duracion se acorta como antes.
+- Con **Remap (mini)** los topes son ~500 s a 12 fps y ~330 s a 30 fps (9999 grupos menos los que ya use tu nivel); con Toggle/Spawn siguen siendo ~2 grupos por frame (~415 s y ~166 s).
+- La nota de la ventana, cuando la duracion esta al maximo, dice QUE limita: grupos de GD (y desde que grupo libre empieza), objetos (y el techo) o los 500 s.
+
 # v1.0.3-beta
 - **Nuevo check "Remap (mini)"**, el metodo mas ligero. Una unica plantilla de 4 Toggle (mostrar 1 + ocultar 3, con 4 grupos "pin" sin objetos) se reutiliza con **remap de Spawn** (clave 442): M lanza `Spawn(plantilla, t, "pin.G_e.pin.G_a...")` por paso. Casi **1 trigger y 1 grupo por frame** (Toggle/Spawn: ~6 y 2): con los 9999 grupos de GD caben ~9990 frames (**500 s a 12 fps**, ~333 s a 30 fps) y sobran ~80 % de triggers para la imagen (en las pruebas: 338 -> 71 triggers). Instantes absolutos como Toggle (una sola ejecucion por paso) y el mismo `Spawn(M, duracion)`.
 - **El anti-lag sigue funcionando con Remap**: cada parte tiene un grupo propio y UN Move de entrada y UNO de salida mueven la parte entera (los frames llevan 2 grupos: el suyo y el de su parte). Mismas distancias, lead y "cada parte a distinta distancia".

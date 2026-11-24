@@ -349,26 +349,32 @@ int VideoPopup::paletteSize() const {
     return m_chan ? std::clamp(int(Mod::get()->getSettingValue<int>("palette-size")), 8, gdx::kVideoMaxPalette) : 0;
 }
 
+int VideoPopup::totalCeiling() const {
+    const int settingMax = std::clamp(int(Mod::get()->getSettingValue<int>("max-total-objects")), 5000, 1000000);
+    return std::clamp(std::min(settingMax, editorRoom()), 500, 1000000);
+}
+
 int VideoPopup::maxTotal() const { return std::clamp(std::min(m_total, editorRoom()), 500, 1000000); }
 
 // Frames que caben con `perFrame` objetos cada uno (6 = cota de triggers por frame) y sin pasarse de los 9999 grupos de GD
 // (hacen falta ~2 por frame: uno para sus objetos y otro para su paso de triggers).
 // Modo Remap: ~1 trigger y ~1 grupo por frame (la plantilla de Toggle se reutiliza); el anti-lag suma 4 triggers y 3 grupos por PARTE (pocas).
+static int framesByObjects(int total, int palette, int perFrame, bool lag, bool remap) {
+    if (remap) return std::max(1, (total - 40 - palette - 4 * (lag ? total / 25000 + 2 : 0)) / (perFrame + 1));      // 1 Spawn por frame
+    return std::max(1, (total - 16 - palette) / (perFrame + (lag ? 8 : 6)));                                          // 6 triggers por frame (+2 Move con anti-lag)
+}
+static int framesByGroups(int total, int groupBase, bool lag, bool remap) {
+    if (remap) return std::max(1, kMaxGroup - groupBase - 12 - 3 * (lag ? total / 25000 + 2 : 0));                  // ~1 grupo por frame
+    return std::max(1, (kMaxGroup - groupBase - 4) / 2);
+}
 static int framesThatFit(int total, int palette, int perFrame, int groupBase, bool lag, bool remap = false) {
-    if (remap) {
-        const int chunks = lag ? total / 25000 + 2 : 0;                                              // cota de partes anti-lag
-        const int byObjects = std::max(1, (total - 40 - palette - 4 * chunks) / (perFrame + 1));      // 1 Spawn por frame
-        const int byGroups = std::max(1, kMaxGroup - groupBase - 12 - 3 * chunks);                   // ~1 grupo por frame
-        return std::min(byObjects, byGroups);
-    }
-    const int byObjects = std::max(1, (total - 16 - palette) / (perFrame + (lag ? 8 : 6)));      // 6 triggers por frame (+2 Move con anti-lag)
-    const int byGroups = std::max(1, (kMaxGroup - groupBase - 4) / 2);
-    return std::min(byObjects, byGroups);
+    return std::min(framesByObjects(total, palette, perFrame, lag, remap), framesByGroups(total, groupBase, lag, remap));
 }
 
 // Duracion MAXIMA del deslizador (suelo absoluto de 40 obj/frame): se puede llegar lejos, aunque con calidad baja.
+// NO depende del deslizador "Objetos totales": usa el techo (ajuste y editor); si la duracion elegida necesita mas total, clampClip() lo sube solo.
 double VideoPopup::maxLengthFit() const {
-    return std::min(kMaxLengthSec, double(framesThatFit(maxTotal(), paletteSize(), kHardMinPerFrame, m_groupBase, m_lag, m_mode == gdx::PlayMode::Remap)) / double(m_fps));
+    return std::min(kMaxLengthSec, double(framesThatFit(totalCeiling(), paletteSize(), kHardMinPerFrame, m_groupBase, m_lag, m_mode == gdx::PlayMode::Remap)) / double(m_fps));
 }
 
 // Duracion RECOMENDADA (con el minimo por frame de Ajustes): la que se propone al abrir un video.
@@ -393,14 +399,25 @@ int VideoPopup::storeLong(int frames) const {
     return std::clamp(int(std::min<double>(cap, L)), 160, cap);
 }
 
-void VideoPopup::clampClip() {
+void VideoPopup::clampClip(bool fitToTotal) {
     if (!m_haveVideo) return;
     const double dur = m_info.duration;
+    const bool remap = m_mode == gdx::PlayMode::Remap;
     m_start = std::clamp(m_start, 0.0, std::max(0.0, dur - 0.5));
     double maxLen = std::min(dur - m_start, maxLengthFit());
+    // el usuario baja "Objetos totales": la duracion se acorta a lo que cabe (como siempre)
+    if (fitToTotal) maxLen = std::min(maxLen, double(framesThatFit(maxTotal(), paletteSize(), kHardMinPerFrame, m_groupBase, m_lag, remap)) / double(m_fps));
     const double minLen = std::min(0.5, std::max(0.1, maxLen));
     maxLen = std::max(maxLen, minLen);
     m_length = std::clamp(std::floor(m_length * 20.0 + 1e-6) / 20.0, minLen, maxLen);
+    if (fitToTotal) return;
+    // la duracion elegida manda: si con el total actual no salen los obj/frame minimos (Ajustes), el total sube hasta lo necesario (con tope en el techo)
+    const int minPer = std::clamp(int(Mod::get()->getSettingValue<int>("min-per-frame")), 30, 3000);
+    const long n = std::max(1, framesNow());
+    const long need = remap ? 40L + paletteSize() + 4L * (m_lag ? totalCeiling() / 25000 + 2 : 0) + n * (minPer + 1)
+                            : 16L + paletteSize() + n * (minPer + (m_lag ? 8 : 6));
+    const int target = int(std::min<long>(need, totalCeiling()));
+    if (m_total < target) m_total = target;
 }
 
 void VideoPopup::syncSliders() {
@@ -477,7 +494,7 @@ void VideoPopup::onTotalSlider(CCObject* sender) {
     const int v = sliderToTotal(static_cast<SliderThumb*>(sender)->getValue(), settingMax);
     if (v == m_total) return;
     m_total = v;
-    this->clampClip();                         // mas objetos = cabe mas duracion
+    this->clampClip(true);                     // menos objetos = la duracion se acorta a lo que cabe
     this->syncSliders();
     this->refreshLabels();
     this->scheduleRecompute();
@@ -501,7 +518,8 @@ void VideoPopup::onLenSlider(CCObject* sender) {
     if (!m_haveVideo) return;
     const double maxLen = std::max(0.5, std::min(m_info.duration - m_start, maxLengthFit()));
     m_length = sliderToRange(static_cast<SliderThumb*>(sender)->getValue(), std::min(0.5, maxLen), maxLen, lenStep(maxLen));
-    this->clampClip();
+    this->clampClip();                         // si hace falta mas total para esa duracion, lo sube
+    this->syncSliders();
     this->refreshLabels();
     if (m_hasResult && !m_build) this->applyPreview(nullptr);
 }
@@ -746,7 +764,14 @@ void VideoPopup::applyPreview(std::shared_ptr<PreviewJob> job) {
     if (pf < minPer) note = "Calidad baja (" + std::to_string(pf) + " obj/frame): acorta la duracion, usa 12 fps o sube el tope. " + note;
     else if (m_length >= fit - 1e-6 && fit < m_info.duration - m_start - 1e-6) {
         if (fit >= kMaxLengthSec - 1e-6) note = "Duracion limitada a 500 s. " + note;
-        else note = std::string("Duracion limitada por el tope de objetos o de grupos de GD (9999). ") + (m_mode == gdx::PlayMode::Remap ? "Remap usa ~1 grupo por frame. " : "Con Toggle/Spawn hacen falta ~2 por frame: prueba Remap. ") + note;
+        else {
+            const bool rm = m_mode == gdx::PlayMode::Remap;
+            const double byG = double(framesByGroups(totalCeiling(), m_groupBase, m_lag, rm)) / m_fps;
+            const double byO = double(framesByObjects(totalCeiling(), paletteSize(), kHardMinPerFrame, m_lag, rm)) / m_fps;
+            char lim[200];
+            std::snprintf(lim, sizeof lim, "Tope %.0f s: por grupos de GD %.0f s (desde el grupo %d), por objetos %.0f s (techo %d). ", fit, byG, m_groupBase, byO, totalCeiling());
+            note = std::string(lim) + (rm ? "" : "Con Toggle/Spawn hacen falta ~2 grupos por frame: prueba Remap. ") + note;
+        }
     }
     this->setStatus(a, b, note);
 }
