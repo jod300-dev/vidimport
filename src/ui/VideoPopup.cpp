@@ -1012,6 +1012,9 @@ void VideoPopup::finishBuild(std::shared_ptr<BuildJob> job) {
     std::string lagText;
     if (lagInfo.active) lagText = " | " + std::to_string(lagInfo.chunks) + " partes anti-lag";
     else if (lagInfo.requested) lagText = " | anti-lag NO aplicado: " + lagInfo.note;
+    if (lagInfo.kickOn && !lagInfo.kickOk)
+        Notification::create("Anti-kick: NO se pudo bajar de " + std::to_string(lagInfo.kickSafe) + " objetos por celda (max " + std::to_string(lagInfo.kickMaxCell) +
+                             "). Riesgo de expulsion al jugar. " + lagInfo.kickNote, NotificationIcon::Error, 12.f)->show();
     if (lagInfo.kickOn) {                                       // resultado del anti-kick (simulacion de las celdas de 100x100 u)
         char kk[220];
         std::snprintf(kk, sizeof kk, " | anti-kick: celda max %ld (limite GD %d, exigido %d)%s", lagInfo.kickMaxCell, lagInfo.kickLimit, lagInfo.kickSafe,

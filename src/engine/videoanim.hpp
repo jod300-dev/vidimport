@@ -75,6 +75,7 @@ struct LagParams {
     bool spread = false;
     double farStep = 30000.0;
     double farMax = 300000.0;
+    double farStepMin = 0.0;          // separacion MINIMA entre partes con spread (anti-kick: ancho de la imagen + margen), aunque pase de farMax
     int objectIdMove = 901;
 };
 
@@ -289,6 +290,10 @@ inline ChunkPlan planChunks(const VideoSchedule& S, const std::vector<size_t>& o
         stepU = std::max(0.0, lp.farStep);
         if (lp.farMax > base) stepU = std::min(stepU, (lp.farMax - base) / double(K - 1));   // la ultima parte no pasa de farMax
         else stepU = 0.0;
+        if (lp.farStepMin > 0.0) {                                                              // anti-kick: las partes NUNCA se pisan (mas lejos que farMax si hace falta, hasta 1.5 M)
+            stepU = std::max(stepU, lp.farStepMin);
+            if (base + double(K - 1) * stepU > 1500000.0) stepU = std::max(0.0, (1500000.0 - base) / double(K - 1));
+        }
     }
     for (size_t k = 0; k < K; ++k) cp.farOf.push_back(base + double(k) * stepU);
     cp.farDist = cp.farOf.back() > cp.farOf.front() ? cp.farOf.back() : cp.farOf.front();
@@ -422,14 +427,20 @@ inline std::string buildVideoString(const std::vector<Result>& results, const Vi
         std::vector<size_t> objs(size_t(U), 0);
         for (int g : S.used) objs[size_t(g)] = results[size_t(g)].shapes.size();
         const GdSize sz0 = gdImageSize(results[size_t(S.ev[0].group)], p.eo);
-        cp = vdetail::planChunks(S, objs, plan.fps, lag, sz0.w);
+        std::vector<std::vector<float>> xs, ys;
         if (p.antiKick) {
-            // posiciones iniciales de cada grupo (exportado una vez en el origen) y simulacion de celdas; si alguna pasa del limite, partes mas pequenas
-            std::vector<std::vector<float>> xs, ys; xs.resize(size_t(U)); ys.resize(size_t(U));
+            // posiciones iniciales de cada grupo (exportado una vez en el origen) -> ancho real ocupado, para separar las partes sin que se pisen
+            xs.resize(size_t(U)); ys.resize(size_t(U));
+            double mnx = 1e18, mxx = -1e18;
             for (int g : S.used) {
                 GdExportOptions e0 = p.eo; e0.groupStr = "1"; e0.monoFastPath = false;
                 vdetail::parseXY(toGdString(results[size_t(g)], e0), xs[size_t(g)], ys[size_t(g)]);
+                for (float x : xs[size_t(g)]) { mnx = std::min(mnx, double(x)); mxx = std::max(mxx, double(x)); }
             }
+            lag.farStepMin = (mxx > mnx ? mxx - mnx : 0.0) + 300.0;
+        }
+        cp = vdetail::planChunks(S, objs, plan.fps, lag, sz0.w);
+        if (p.antiKick) {
             const long extra = 12;                                           // triggers de la rejilla: como mucho ~11 por celda
             auto farFor = [&](const vdetail::ChunkPlan& c) {
                 std::vector<double> f(size_t(U), 0.0);

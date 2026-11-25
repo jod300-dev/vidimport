@@ -14,6 +14,7 @@
 #include <Geode/Geode.hpp>
 #include <Geode/modify/CCDirector.hpp>
 #include <Geode/modify/EditorPauseLayer.hpp>
+#include <Geode/modify/GJBaseGameLayer.hpp>
 #include <Geode/modify/LevelInfoLayer.hpp>
 #include <Geode/modify/PlayLayer.hpp>
 
@@ -226,6 +227,34 @@ class $modify(PlayLogPlayLayer, PlayLayer) {
     void levelComplete() {
         if (enabled() && g_playing) { flushStats("nivel completado"); append("PlayLayer::levelComplete: nivel completado"); }
         PlayLayer::levelComplete();
+    }
+};
+
+// Diagnostico del anticheat de nivel (GD 2.2081): PlayLayer::setupHasCompleted llama a GJBaseGameLayer::shouldExitHackedLevel, que mira cuantos
+// objetos hay en cada celda de 100x100 u (m_sectionSizes) y, si alguna pasa de 8000 (4000 con >0.9 celdas vacias por cada ocupada), saca del nivel.
+// Aqui SOLO se registra lo que GD ve (celda mas llena y donde esta); el resultado se devuelve tal cual, sin tocarlo.
+class $modify(PlayLogBaseLayer, GJBaseGameLayer) {
+    bool shouldExitHackedLevel() {
+        const bool res = GJBaseGameLayer::shouldExitHackedLevel();
+        if (!enabled()) return res;
+        long maxC = 0, zeros = 0, occ = 0, total = 0, over2000 = 0, over4000 = 0; size_t mx = 0, my = 0;
+        for (size_t x = 0; x < m_sectionSizes.size(); ++x) {
+            auto* col = m_sectionSizes[x];
+            if (!col) continue;
+            for (size_t y = 0; y < col->size(); ++y) {
+                const long v = (*col)[y];
+                if (v > 0) { ++occ; total += v; if (v > 2000) ++over2000; if (v > 4000) ++over4000; if (v > maxC) { maxC = v; mx = x; my = y; } }
+                else ++zeros;
+            }
+        }
+        const double ratio = occ > 0 ? double(zeros) / double(occ) : 0.0;
+        std::ostringstream o;
+        o << "GJBaseGameLayer::shouldExitHackedLevel -> " << (res ? "EXPULSA DEL NIVEL" : "no expulsa")
+          << " | celda mas llena: " << maxC << " objetos en la celda x=" << mx << " y=" << my << " (unidades x " << (mx * 100) << "-" << (mx * 100 + 99)
+          << ", y " << (my * 100) << "-" << (my * 100 + 99) << ") | celdas vacias/ocupadas = " << ratio << " -> limite de GD " << (ratio > 0.9 ? 4000 : 8000)
+          << " | celdas con >2000: " << over2000 << ", con >4000: " << over4000 << " | objetos contados en celdas: " << total;
+        append(o.str());
+        return res;
     }
 };
 

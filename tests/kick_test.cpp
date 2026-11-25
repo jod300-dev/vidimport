@@ -33,9 +33,10 @@ int main() {
     size_t perFrame = res.empty() ? 0 : res[0].shapes.size();
     printf("frames=%d, ~%zu objetos por frame, %zu en total\n", N, perFrame, perFrame * size_t(N));
     for (int mode = 0; mode < 3; ++mode)
-    for (int lagReq = 0; lagReq < 2; ++lagReq) {
+    for (int lagReq = 0; lagReq < 2; ++lagReq)
+    for (double fm : {300000.0, 50000.0}) {                                  // farMax pequeno: sin proteccion las partes se pisarian (paso < ancho de la imagen)
         VideoExportParams p; p.baseGroup = 100; p.eo.longSide = 600; p.mode = PlayMode(mode);
-        p.lag.enable = lagReq; p.lag.chunkObjects = 25000;
+        p.lag.enable = lagReq; p.lag.chunkObjects = 25000; p.lag.farMax = fm;
         std::string err;
         p.antiKick = false; LagInfo l0; const std::string c0 = buildVideoString(res, plan, p, &err, &l0);
         p.antiKick = true;  LagInfo l1; const std::string c1 = buildVideoString(res, plan, p, &err, &l1);
@@ -51,8 +52,8 @@ int main() {
         }
         const bool okMax = (m1 <= p.kickSafeCell + 12) && l1.kickOk && std::labs(m1 - l1.kickMaxCell) <= 40;   // la estimacion interna coincide con la medida
         const bool improved = m1 <= m0;
-        printf("%-6s anti-lag pedido=%d: sin anti-kick celda max=%ld | con anti-kick=%ld (estimada %ld, limite GD %d, exigido %d, partes de %d obj, %d partes) %s | frames mal: %d\n",
-               mode == 2 ? "Remap" : mode ? "Spawn" : "Toggle", lagReq, m0, m1, l1.kickMaxCell, l1.kickLimit, l1.kickSafe, l1.kickChunkObjects, l1.chunks,
+        printf("%-6s anti-lag pedido=%d farMax=%.0f: sin anti-kick celda max=%ld | con anti-kick=%ld (estimada %ld, limite GD %d, exigido %d, partes de %d obj, %d partes) %s | frames mal: %d\n",
+               mode == 2 ? "Remap" : mode ? "Spawn" : "Toggle", lagReq, fm, m0, m1, l1.kickMaxCell, l1.kickLimit, l1.kickSafe, l1.kickChunkObjects, l1.chunks,
                okMax && improved ? "OK" : "FALLO", wrong);
         if (!okMax || !improved || wrong) ++bad;
         if (m0 <= p.kickSafeCell) { printf("   (aviso: el caso de prueba no supera el limite sin anti-kick; sube N)\n"); }

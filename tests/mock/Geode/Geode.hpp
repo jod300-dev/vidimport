@@ -112,6 +112,7 @@ namespace prelude { using namespace geode; }
 // --- clases de GD para los hooks de playlog.cpp (solo las firmas que usa el mod)
 namespace gd { using string = std::string; }
 struct GJGameLevel : CCObject { gd::string m_levelName; gd::string m_levelString; };
+struct GJBaseGameLayer : CCNode { std::vector<std::vector<int>*> m_sectionSizes; bool shouldExitHackedLevel() { return false; } };
 struct PlayLayer : CCNode { bool init(GJGameLevel*, bool, bool) { return true; } void setupHasCompleted() {} void update(float) {} void onQuit() {} void levelComplete() {} };
 struct LevelInfoLayer : CCNode { GJGameLevel* m_level = nullptr; bool init(GJGameLevel*, bool) { return true; } void onPlay(CCObject*) {} };
 struct EditLevelLayer : CCNode {};
