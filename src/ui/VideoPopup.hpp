@@ -140,6 +140,8 @@ protected:
     gdx::PlayMode m_mode = gdx::PlayMode::Toggle;
     bool m_gray = false;
     bool m_chan = false;                   // colores en canales (sin HSV) en vez de HSV
+    bool m_antiKick = false;               // ajuste "Anti-kick (test)": fuerza las partes anti-lag para no pasar el limite de objetos por celda de GD
+    bool lagEff() const { return m_lag || m_antiKick; }   // anti-lag efectivo (para presupuestos de objetos y grupos)
     bool m_lag = false;                    // partes anti-lag (Move): solo una parte cerca de la camara
 
     CCLabelBMFont* m_methodLabel = nullptr;

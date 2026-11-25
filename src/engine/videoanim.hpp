@@ -38,8 +38,10 @@
 #pragma once
 #include <algorithm>
 #include <map>
+#include <cstdlib>
 #include <set>
 #include <string>
+#include <unordered_map>
 #include <vector>
 #include "gdexport.hpp"
 #include "videoplan.hpp"
@@ -83,6 +85,14 @@ struct LagInfo {
     long moveTriggers = 0;
     double farDist = 0;
     std::string note;                 // por que no se aplico (si se pidio y no se pudo)
+    // Anti-kick (GD 2.2081 expulsa del nivel al cargarlo si una celda de 100x100 u tiene demasiados objetos): resultado de la simulacion
+    bool kickOn = false, kickOk = true;
+    long kickMaxCell = 0;             // objetos de la celda mas llena (en la colocacion inicial, la que mira GD al cargar)
+    int kickLimit = 0;                // limite que aplicaria GD con la proporcion de celdas vacias simulada (8000 o 4000)
+    int kickSafe = 0;                 // limite que se exige (con margen)
+    int kickChunkObjects = 0;         // objetos por parte con los que se cumplio
+    double kickEmptyRatio = 0;        // celdas vacias / celdas con objetos (si pasa de 0.9 el limite de GD baja a 4000)
+    std::string kickNote;
 };
 
 struct VideoExportParams {
@@ -96,6 +106,10 @@ struct VideoExportParams {
     // Los triggers van PEGADOS (paso 30 u en X e Y: uno al lado y uno encima del otro). La rejilla base de gridCols columnas se ENSANCHA en
     // spreadXBlocks columnas mas; las filas crecen las que hagan falta (sin tope), asi que arriba tambien cabe todo.
     int spreadXBlocks = 50;
+    // ANTI-KICK (test): simula las celdas de 100x100 u que mira GD al cargar (limite 8000 objetos por celda, 4000 si el nivel es muy
+    // vacio). Fuerza las partes anti-lag con cada parte a distinta distancia y reduce los objetos por parte hasta que ninguna celda pase de kickSafeCell.
+    bool antiKick = false;
+    int kickSafeCell = 3400;          // objetos por celda exigidos (el limite de GD es 4000 u 8000: margen del 15 %)
     // Correccion de velocidad: todos los tiempos (retardos de los Spawn, duracion de la vuelta) se multiplican por esto. 1 = exacto.
     // Si en tu GD la animacion dura MENOS que el video, sube el valor (p. ej. 1.05); si dura mas, bajalo.
     double timeScale = 1.0;
@@ -168,6 +182,52 @@ inline std::vector<int> hideSet(const std::vector<VEvent>& ev, size_t e) {
     if (E >= 6) add(e + E / 2);                                 // lejano: repartido por todo el bucle
     return v;
 }
+// ---------------------------------------------------------------------------------------------------------------------------------
+// ANTI-KICK. GD 2.2081 (PlayLayer::setupHasCompleted -> GJBaseGameLayer::shouldExitHackedLevel) cuenta los objetos de cada celda de
+// 100 x 100 u segun su posicion INICIAL (indice = trunc(pos * 0.01f), 0 si pos <= 0). Si la celda mas llena pasa de 8000 objetos -- de 4000 si
+// las celdas vacias son mas de 0.9 por cada celda con objetos -- expulsa del nivel (removeAllObjects + onQuit). Aqui se simula igual.
+// ---------------------------------------------------------------------------------------------------------------------------------
+inline int secIdx(double v) { if (!(v > 0.0)) return 0; if (v > 1e7) v = 1e7; return int(v * double(0.01f)); }
+
+// Posiciones (clave 2 y 3) de los objetos de una cadena de nivel.
+inline void parseXY(const std::string& s, std::vector<float>& xs, std::vector<float>& ys) {
+    const size_t n = s.size(); size_t i = 0; double x = 0, y = 0; bool hx = false, hy = false;
+    while (i < n) {
+        const size_t c = s.find(',', i); if (c == std::string::npos) break;
+        size_t e = s.find_first_of(",;", c + 1); if (e == std::string::npos) e = n;
+        const size_t kl = c - i;
+        if (kl == 1 && s[i] == '2') { x = std::strtod(s.c_str() + c + 1, nullptr); hx = true; }
+        else if (kl == 1 && s[i] == '3') { y = std::strtod(s.c_str() + c + 1, nullptr); hy = true; }
+        if (e < n && s[e] == ';') { if (hx && hy) { xs.push_back(float(x)); ys.push_back(float(y)); } hx = hy = false; }
+        i = e + 1;
+    }
+}
+struct CellStats { long maxCell = 0; double ratio = 0; int limit = 8000; };
+// `farX[g]` = desplazamiento X inicial del grupo g (0 si empieza cerca). Cuenta tambien `extra` objetos fijos por celda (triggers de la rejilla).
+inline CellStats cellStats(const std::vector<std::vector<float>>& xs, const std::vector<std::vector<float>>& ys, const std::vector<int>& used,
+                           const std::vector<double>& farX, long extra) {
+    std::unordered_map<unsigned long long, int> cnt;
+    for (int g : used) {
+        const auto& X = xs[size_t(g)]; const auto& Y = ys[size_t(g)];
+        const double f = farX[size_t(g)];
+        for (size_t i = 0; i < X.size(); ++i)
+            ++cnt[(static_cast<unsigned long long>(secIdx(double(X[i]) + f)) << 32) | static_cast<unsigned int>(secIdx(double(Y[i])))];
+    }
+    CellStats st;
+    std::unordered_map<int, std::pair<int, int>> col;                       // columna -> (cy maximo, celdas ocupadas)
+    for (auto& kv : cnt) {
+        st.maxCell = std::max<long>(st.maxCell, kv.second);
+        auto& c = col[int(kv.first >> 32)];
+        c.first = std::max(c.first, int(kv.first & 0xffffffffu)); ++c.second;
+    }
+    long zeros = 0, occ = 0;
+    for (auto& kv : col) { zeros += long(kv.second.first) + 1 - kv.second.second; occ += kv.second.second; }
+    st.ratio = occ > 0 ? double(zeros) / double(occ) : 0.0;
+    st.limit = st.ratio > 0.9 ? 4000 : 8000;
+    st.maxCell += extra;
+    return st;
+}
+
 struct ChunkPlan {
     bool active = false;
     std::string note;
@@ -349,18 +409,51 @@ inline std::string buildVideoString(const std::vector<Result>& results, const Vi
 
     // ---- partes anti-lag
     vdetail::ChunkPlan cp;
-    LagInfo li; li.requested = p.lag.enable;
+    LagParams lag = p.lag;
+    if (p.antiKick) { lag.enable = true; lag.spread = true; }              // anti-kick: las partes lejanas no se apilan en un mismo sitio
+    LagInfo li; li.requested = lag.enable; li.kickOn = p.antiKick;
     std::vector<char> farGroup(size_t(U), 0);
     std::vector<double> farOfGroup(size_t(U), 0.0);                          // distancia de espera de cada grupo (la de su parte)
     std::vector<std::vector<std::pair<int, double>>> movesAt(E);            // paso -> (grupo, dx)
     std::vector<char> stepHasMove(E, 0);
     std::vector<int> chunkOfGroup(size_t(U), -1);                           // Remap: parte (0..K-1) de cada grupo de frames
     std::vector<int> Cg, MVin, MVout;                                       // Remap: grupo de cada parte y grupos de sus Move de entrada / salida
-    if (p.lag.enable) {
+    if (lag.enable) {
         std::vector<size_t> objs(size_t(U), 0);
         for (int g : S.used) objs[size_t(g)] = results[size_t(g)].shapes.size();
         const GdSize sz0 = gdImageSize(results[size_t(S.ev[0].group)], p.eo);
-        cp = vdetail::planChunks(S, objs, plan.fps, p.lag, sz0.w);
+        cp = vdetail::planChunks(S, objs, plan.fps, lag, sz0.w);
+        if (p.antiKick) {
+            // posiciones iniciales de cada grupo (exportado una vez en el origen) y simulacion de celdas; si alguna pasa del limite, partes mas pequenas
+            std::vector<std::vector<float>> xs, ys; xs.resize(size_t(U)); ys.resize(size_t(U));
+            for (int g : S.used) {
+                GdExportOptions e0 = p.eo; e0.groupStr = "1"; e0.monoFastPath = false;
+                vdetail::parseXY(toGdString(results[size_t(g)], e0), xs[size_t(g)], ys[size_t(g)]);
+            }
+            const long extra = 12;                                           // triggers de la rejilla: como mucho ~11 por celda
+            auto farFor = [&](const vdetail::ChunkPlan& c) {
+                std::vector<double> f(size_t(U), 0.0);
+                if (c.active) for (size_t k = 0; k < c.groups.size(); ++k) if (!c.startsNear[k]) for (int g : c.groups[k]) f[size_t(g)] = c.farOf[k];
+                return f;
+            };
+            vdetail::CellStats st = vdetail::cellStats(xs, ys, S.used, farFor(cp), extra);
+            int chunk = lag.chunkObjects;
+            const long groupsFixed = long(next) + (remap ? 0 : 0);
+            for (int it = 0; it < 10 && st.maxCell > p.kickSafeCell && cp.active && chunk > 1000; ++it) {
+                const int nc = std::max(1000, chunk / 2);
+                LagParams l2 = lag; l2.chunkObjects = nc;
+                vdetail::ChunkPlan c2 = vdetail::planChunks(S, objs, plan.fps, l2, sz0.w);
+                if (!c2.active) break;
+                if (remap && groupsFixed + 3L * long(c2.groups.size()) > 9990) break;            // no quedan grupos para tantas partes
+                chunk = nc; cp = std::move(c2); lag = l2;
+                st = vdetail::cellStats(xs, ys, S.used, farFor(cp), extra);
+            }
+            li.kickMaxCell = st.maxCell; li.kickLimit = st.limit; li.kickEmptyRatio = st.ratio; li.kickSafe = p.kickSafeCell;
+            li.kickChunkObjects = cp.active ? chunk : 0;
+            li.kickOk = st.maxCell <= p.kickSafeCell;
+            if (!cp.active) li.kickNote = "no se pudo repartir en partes (" + cp.note + ")";
+            else if (!li.kickOk) li.kickNote = "ni con partes de " + std::to_string(chunk) + " objetos baja de " + std::to_string(p.kickSafeCell) + " por celda";
+        }
         li.active = cp.active; li.note = cp.note; li.chunks = int(cp.groups.size()); li.farDist = cp.farDist;
         if (cp.active) {
             for (size_t k = 0; k < cp.groups.size(); ++k) {
@@ -379,6 +472,13 @@ inline std::string buildVideoString(const std::vector<Result>& results, const Vi
             }
             for (size_t e = 0; e < E; ++e) stepHasMove[e] = movesAt[e].empty() ? 0 : 1;
         }
+    }
+    if (p.antiKick && !cp.active && li.kickMaxCell == 0 && !S.still) {      // sin partes: se simula igual para avisar (todo apilado en el origen)
+        std::vector<std::vector<float>> xs, ys; xs.resize(size_t(U)); ys.resize(size_t(U)); std::vector<double> f(size_t(U), 0.0);
+        for (int g : S.used) { GdExportOptions e0 = p.eo; e0.groupStr = "1"; e0.monoFastPath = false; vdetail::parseXY(toGdString(results[size_t(g)], e0), xs[size_t(g)], ys[size_t(g)]); }
+        const vdetail::CellStats st = vdetail::cellStats(xs, ys, S.used, f, 12);
+        li.kickMaxCell = st.maxCell; li.kickLimit = st.limit; li.kickEmptyRatio = st.ratio; li.kickSafe = p.kickSafeCell; li.kickOk = st.maxCell <= p.kickSafeCell;
+        if (!li.kickOk && li.kickNote.empty()) li.kickNote = "sin partes anti-lag no hay forma de repartir los frames";
     }
     if (lagInfo) *lagInfo = li;
 

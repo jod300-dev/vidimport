@@ -21,7 +21,8 @@ int main(int argc, char** argv) {
     VideoPlan plan = planVideo(clip, po);
     Options o; o.quality = 0; o.lightSpecialChannels = true; o.maxChannels = 0; o.maxRaster = 384;
     auto res = convertVideo(clip, plan, Method(method), o, nullptr, 1);
-    VideoExportParams p; if (CH) p.palette = quantizeVideo(res, CH);
+    VideoExportParams p; if (getenv("KICK")) { p.antiKick = true; p.kickSafeCell = atoi(getenv("KICK")); }
+    if (CH) p.palette = quantizeVideo(res, CH);
     p.baseGroup = 100; p.eo.longSide = 600; p.mode = PlayMode(mode);
     std::string err; std::string chain = buildVideoString(res, plan, p, &err);
     double ms = nowMs() - t0;

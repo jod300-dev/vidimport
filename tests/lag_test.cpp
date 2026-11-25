@@ -32,6 +32,7 @@ int main(int argc, char** argv) {
     for (int lag = 0; lag < 2; ++lag) {
         VideoExportParams p; p.baseGroup = 100; p.eo.longSide = 600; p.mode = PlayMode(mode);
         p.palette = pal; p.lag.enable = lag == 1; p.lag.chunkObjects = chunk; p.lag.leadSeconds = lead;
+        if (getenv("KICK")) { p.antiKick = true; p.kickSafeCell = atoi(getenv("KICK")); }       // anti-kick con ese limite exigido por celda
         if (getenv("SPREAD")) { p.lag.spread = true; p.lag.farStep = atof(getenv("SPREAD")); }
         std::string err; chains[lag] = buildVideoString(res, plan, p, &err, &li[lag]);
         if (chains[lag].empty()) { printf("FAIL %s\n", err.c_str()); return 1; }

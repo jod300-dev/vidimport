@@ -33,6 +33,9 @@ Los triggers van pegados, con paso de 1 bloque (30 u) en X e Y: uno al lado y un
 ## Modo Remap (mini)
 Tercer check de reproduccion (junto a Toggle y Spawn). En vez de un grupo y ~6 triggers por paso, hay UNA plantilla de 4 Toggle cuyos objetivos son 4 grupos "pin" sin objetos, y cada paso es un solo `Spawn(plantilla, t, remap)` (clave 442, formato `pin.grupo.pin.grupo`) que sustituye los pines por los grupos de ese paso. Resultado: ~1 grupo y ~1 trigger por frame, instantes absolutos (como Toggle). Con anti-lag cada parte lleva un grupo propio (los objetos tienen 2 grupos) y un Move de entrada/salida la mueve entera. El simulador de `tests/gdsim.hpp` entiende el remap y las pruebas e2e / anti-lag / tiempo lo ejecutan en los 3 modos.
 
+## Anti-kick (test)
+Ajuste del mod (apagado por defecto). GD 2.2081 mira, al terminar de cargar el nivel, cuantos objetos hay en cada celda de 100x100 u segun su posicion inicial; si alguna pasa de 8000 (4000 con muchas celdas vacias) te saca del nivel. Con el check el mod simula las celdas, activa las partes anti-lag con cada parte a distinta distancia y las hace mas pequenas hasta quedar bajo 3400 por celda (aviso si no puede). Cubierto por `tests/kick_test.cpp` (mide la cadena final de forma independiente) y por los tests de anti-lag y e2e con `KICK=<limite>`. El analisis esta hecho sobre el ejecutable (lectura estatica): confirmalo en el juego con un nivel de ~9000 objetos en un punto.
+
 ## 12 fps / 30 fps
 El video se muestrea en `t = inicio + k / fps` eligiendo el frame decodificado **mas cercano** (igual que el filtro `fps` de ffmpeg). Con el mismo presupuesto, 12 fps da ~2,5 veces mas objetos por frame y videos ~2,5 veces mas largos; 30 fps es mas fluido.
 

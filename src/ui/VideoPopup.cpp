@@ -219,6 +219,7 @@ bool VideoPopup::init(EditorUI* editor) {
     m_gray = mod->getSavedValue<bool>("gray", false);
     m_chan = mod->getSavedValue<bool>("chan", false);
     m_lag = mod->getSavedValue<bool>("lag", false);
+    m_antiKick = mod->getSettingValue<bool>("anti-kick");
     m_groupBase = std::max(this->maxUsedGroup() + 1, std::clamp(int(mod->getSettingValue<int>("first-group")), 1, 9000));
 
     auto put = [&](CCNode* n, float x, float y) { m_mainLayer->addChildAtPosition(n, Anchor::TopLeft, ccp(x, -y)); };
@@ -374,20 +375,20 @@ static int framesThatFit(int total, int palette, int perFrame, int groupBase, bo
 // Duracion MAXIMA del deslizador (suelo absoluto de 40 obj/frame): se puede llegar lejos, aunque con calidad baja.
 // NO depende del deslizador "Objetos totales": usa el techo (ajuste y editor); si la duracion elegida necesita mas total, clampClip() lo sube solo.
 double VideoPopup::maxLengthFit() const {
-    return std::min(kMaxLengthSec, double(framesThatFit(totalCeiling(), paletteSize(), kHardMinPerFrame, m_groupBase, m_lag, m_mode == gdx::PlayMode::Remap)) / double(m_fps));
+    return std::min(kMaxLengthSec, double(framesThatFit(totalCeiling(), paletteSize(), kHardMinPerFrame, m_groupBase, lagEff(), m_mode == gdx::PlayMode::Remap)) / double(m_fps));
 }
 
 // Duracion RECOMENDADA (con el minimo por frame de Ajustes): la que se propone al abrir un video.
 double VideoPopup::softLengthFit() const {
     const int minPer = std::clamp(int(Mod::get()->getSettingValue<int>("min-per-frame")), 30, 3000);
-    return std::min(kMaxLengthSec, double(framesThatFit(maxTotal(), paletteSize(), minPer, m_groupBase, m_lag, m_mode == gdx::PlayMode::Remap)) / double(m_fps));
+    return std::min(kMaxLengthSec, double(framesThatFit(maxTotal(), paletteSize(), minPer, m_groupBase, lagEff(), m_mode == gdx::PlayMode::Remap)) / double(m_fps));
 }
 
 int VideoPopup::perFrameEstimate() const {
     const int n = std::max(1, framesNow());
     if (m_mode == gdx::PlayMode::Remap)
-        return std::max(0, int((long(maxTotal()) - gdx::videoTriggerBoundRemap(n, n, m_lag ? long(maxTotal() / 25000) + 2 : 0L) - paletteSize()) / n));
-    return std::max(0, int((long(maxTotal()) - gdx::videoTriggerBound(n, n) - (m_lag ? 2L * n : 0L) - paletteSize()) / n));
+        return std::max(0, int((long(maxTotal()) - gdx::videoTriggerBoundRemap(n, n, lagEff() ? long(maxTotal() / 25000) + 2 : 0L) - paletteSize()) / n));
+    return std::max(0, int((long(maxTotal()) - gdx::videoTriggerBound(n, n) - (lagEff() ? 2L * n : 0L) - paletteSize()) / n));
 }
 
 int VideoPopup::storeLong(int frames) const {
@@ -406,7 +407,7 @@ void VideoPopup::clampClip(bool fitToTotal) {
     m_start = std::clamp(m_start, 0.0, std::max(0.0, dur - 0.5));
     double maxLen = std::min(dur - m_start, maxLengthFit());
     // el usuario baja "Objetos totales": la duracion se acorta a lo que cabe (como siempre)
-    if (fitToTotal) maxLen = std::min(maxLen, double(framesThatFit(maxTotal(), paletteSize(), kHardMinPerFrame, m_groupBase, m_lag, remap)) / double(m_fps));
+    if (fitToTotal) maxLen = std::min(maxLen, double(framesThatFit(maxTotal(), paletteSize(), kHardMinPerFrame, m_groupBase, lagEff(), remap)) / double(m_fps));
     const double minLen = std::min(0.5, std::max(0.1, maxLen));
     maxLen = std::max(maxLen, minLen);
     m_length = std::clamp(std::floor(m_length * 20.0 + 1e-6) / 20.0, minLen, maxLen);
@@ -414,8 +415,8 @@ void VideoPopup::clampClip(bool fitToTotal) {
     // la duracion elegida manda: si con el total actual no salen los obj/frame minimos (Ajustes), el total sube hasta lo necesario (con tope en el techo)
     const int minPer = std::clamp(int(Mod::get()->getSettingValue<int>("min-per-frame")), 30, 3000);
     const long n = std::max(1, framesNow());
-    const long need = remap ? 40L + paletteSize() + 4L * (m_lag ? totalCeiling() / 25000 + 2 : 0) + n * (minPer + 1)
-                            : 16L + paletteSize() + n * (minPer + (m_lag ? 8 : 6));
+    const long need = remap ? 40L + paletteSize() + 4L * (lagEff() ? totalCeiling() / 25000 + 2 : 0) + n * (minPer + 1)
+                            : 16L + paletteSize() + n * (minPer + (lagEff() ? 8 : 6));
     const int target = int(std::min<long>(need, totalCeiling()));
     if (m_total < target) m_total = target;
 }
@@ -668,7 +669,7 @@ gdx::VideoPlanOptions VideoPopup::makePlanOptions() const {
     po.adaptive = mod->getSettingValue<bool>("adaptive");
     po.stabilizeTol = std::clamp(int(mod->getSettingValue<int>("stabilize")), 0, 20);
     po.extraObjects = paletteSize();           // los Color triggers de la paleta cuentan como objetos
-    po.lagMoves = m_lag;                       // 2 Move triggers por grupo de frames (Remap: 4 por parte)
+    po.lagMoves = lagEff();                       // 2 Move triggers por grupo de frames (Remap: 4 por parte)
     po.remap = m_mode == gdx::PlayMode::Remap;
     po.lagChunkObjects = std::clamp(int(mod->getSettingValue<int>("lag-chunk-objects")), 500, 200000);
     return po;
@@ -766,8 +767,8 @@ void VideoPopup::applyPreview(std::shared_ptr<PreviewJob> job) {
         if (fit >= kMaxLengthSec - 1e-6) note = "Duracion limitada a 500 s. " + note;
         else {
             const bool rm = m_mode == gdx::PlayMode::Remap;
-            const double byG = double(framesByGroups(totalCeiling(), m_groupBase, m_lag, rm)) / m_fps;
-            const double byO = double(framesByObjects(totalCeiling(), paletteSize(), kHardMinPerFrame, m_lag, rm)) / m_fps;
+            const double byG = double(framesByGroups(totalCeiling(), m_groupBase, lagEff(), rm)) / m_fps;
+            const double byO = double(framesByObjects(totalCeiling(), paletteSize(), kHardMinPerFrame, lagEff(), rm)) / m_fps;
             char lim[200];
             std::snprintf(lim, sizeof lim, "Tope %.0f s: por grupos de GD %.0f s (desde el grupo %d), por objetos %.0f s (techo %d). ", fit, byG, m_groupBase, byO, totalCeiling());
             note = std::string(lim) + (rm ? "" : "Con Toggle/Spawn hacen falta ~2 grupos por frame: prueba Remap. ") + note;
@@ -902,8 +903,8 @@ void VideoPopup::onPlace(CCObject*) {
     job->info = m_info;
     job->fps = m_fps;
     job->chan = m_chan;
-    job->lag = m_lag;
-    job->lagParams.enable = m_lag;
+    job->lag = lagEff();
+    job->lagParams.enable = lagEff();
     job->lagParams.chunkObjects = std::clamp(int(mod->getSettingValue<int>("lag-chunk-objects")), 500, 200000);
     job->lagParams.leadSeconds = std::clamp(mod->getSettingValue<double>("lag-lead"), 0.1, 3.0);
     job->lagParams.farDistance = std::clamp(double(mod->getSettingValue<int>("lag-far")), 1500.0, 300000.0);
@@ -977,6 +978,7 @@ void VideoPopup::finishBuild(std::shared_ptr<BuildJob> job) {
     p.spreadXBlocks = std::clamp(int(mod->getSettingValue<int>("trigger-spread-x")), 0, 500);
     if (job->chan) p.palette = job->palette;       // vacia = HSV
     p.lag = job->lagParams;
+    p.antiKick = mod->getSettingValue<bool>("anti-kick");
     const CCPoint origin = placementOrigin();
     p.eo.originX = origin.x;
     p.eo.originY = origin.y;
@@ -1010,16 +1012,30 @@ void VideoPopup::finishBuild(std::shared_ptr<BuildJob> job) {
     std::string lagText;
     if (lagInfo.active) lagText = " | " + std::to_string(lagInfo.chunks) + " partes anti-lag";
     else if (lagInfo.requested) lagText = " | anti-lag NO aplicado: " + lagInfo.note;
-    char msg[320];
+    if (lagInfo.kickOn) {                                       // resultado del anti-kick (simulacion de las celdas de 100x100 u)
+        char kk[220];
+        std::snprintf(kk, sizeof kk, " | anti-kick: celda max %ld (limite GD %d, exigido %d)%s", lagInfo.kickMaxCell, lagInfo.kickLimit, lagInfo.kickSafe,
+                      lagInfo.kickOk ? " OK" : (" ¡RIESGO DE EXPULSION! " + lagInfo.kickNote).c_str());
+        lagText += kk;
+    }
+    char msg[420];
     std::snprintf(msg, sizeof msg, "Video colocado: %.2f s, %d frames (%d distintos), %zu objetos, grupos %d-%d | %s%s%s%s",
                   job->plan.seconds(), job->plan.frames, job->plan.groups(), count, p.baseGroup, p.baseGroup + std::max(0, S.groupsNeeded + (p.mode == gdx::PlayMode::Remap && lagInfo.active ? 3 * lagInfo.chunks : 0) - 1),
                   (p.mode == gdx::PlayMode::Toggle ? "Toggle" : p.mode == gdx::PlayMode::Remap ? "Remap" : "Spawn"), job->chan ? " | canales" : "", lagText.c_str(), job->backend.empty() ? "" : (" | " + job->backend).c_str());
     {   // resumen para el log de "Guardar log al jugar"
-        char sum[640];
+        char sum[900];
         std::snprintf(sum, sizeof sum, "bucle %.3f s (escala x%.3f, M se relanza a los %.3f s), %zu objetos, cadena %.1f MB, %d frames (%d distintos), grupos %d-%d, modo %s%s, anti-lag %s (%d partes, espera hasta x+%.0f%s)",
                       job->plan.seconds(), p.timeScale, S.total, count, double(str.size()) / (1024.0 * 1024.0), job->plan.frames, job->plan.groups(), p.baseGroup, p.baseGroup + std::max(0, S.groupsNeeded + (p.mode == gdx::PlayMode::Remap && lagInfo.active ? 3 * lagInfo.chunks : 0) - 1),
                       (p.mode == gdx::PlayMode::Toggle ? "Toggle" : p.mode == gdx::PlayMode::Remap ? "Remap" : "Spawn"), job->chan ? "+canales" : "", lagInfo.active ? "SI" : "no", lagInfo.chunks, lagInfo.farDist, p.lag.spread ? ", cada parte a distinta distancia" : "");
-        mod->setSavedValue<std::string>("last-placement", std::string(sum));
+        std::string sumS(sum);
+        if (lagInfo.kickOn) {
+            char kk[300];
+            std::snprintf(kk, sizeof kk, " | anti-kick: celda max %ld de 100x100 u (limite GD %d con %.2f celdas vacias por ocupada; exigido %d; partes de %d objetos) %s %s",
+                          lagInfo.kickMaxCell, lagInfo.kickLimit, lagInfo.kickEmptyRatio, lagInfo.kickSafe, lagInfo.kickChunkObjects,
+                          lagInfo.kickOk ? "OK" : "RIESGO DE EXPULSION", lagInfo.kickNote.c_str());
+            sumS += kk;
+        }
+        mod->setSavedValue<std::string>("last-placement", sumS);
     }
     this->startPlacement(str, count, msg);
     this->onClose(nullptr);
