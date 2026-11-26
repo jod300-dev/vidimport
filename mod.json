@@ -8,7 +8,7 @@
   },
   "id": "patasma.video_importer",
   "name": "Video Importer",
-  "version": "v1.0.6-beta",
+  "version": "v1.0.7-beta",
   "developer": "Patasma",
   "description": "Convierte un MP4 en una animacion del editor: cada frame (12 o 30 fps) son objetos y se reproduce con Toggle triggers + Spawn triggers (modo lista exacta o cadena ligera), en bucle infinito, con partes anti-lag opcionales (color en HSV o en canales), dentro de un presupuesto de 400-500k objetos.",
   "resources": {
@@ -122,6 +122,14 @@
       "default": false,
       "name": "Anti-kick (test)",
       "description": "GD 2.2081 te EXPULSA del nivel al cargarlo si una celda de 100x100 u tiene mas de <cy>8000</c> objetos (<cy>4000</c> si el nivel es muy vacio). Con este check el mod <cy>simula esas celdas</c> antes de colocar, <cy>fuerza las partes anti-lag</c> (cada parte a distinta distancia, aunque el anti-lag este apagado) y reduce los objetos por parte hasta quedar bajo <cy>3400</c> por celda. Avisa si no lo consigue. Solo cambia la colocacion INICIAL; la animacion es la misma."
+    },
+    "anti-kick-height": {
+      "type": "int",
+      "default": 600,
+      "min": 100,
+      "max": 5000,
+      "name": "Anti-kick: altura de la cuadricula (bloques)",
+      "description": "Con <cy>Anti-kick</c> las partes que esperan lejos se reparten en una <cy>cuadricula en X e Y</c> (a la derecha y hacia arriba del video). Esta es la altura maxima (en bloques de 30 u) que puede ocupar por encima del video; si no caben mas filas, se ensancha en X. Bajala si GD se queja de objetos muy altos."
     },
     "first-group": {
       "type": "int",

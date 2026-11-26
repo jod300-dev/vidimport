@@ -1,3 +1,9 @@
+# v1.0.7-beta
+- **Anti-kick en X e Y**: con el check activo, las partes que esperan lejos ya no van en una sola fila hacia la derecha (llegaba a x de cientos de miles): se reparten en una **cuadricula en X e Y** (columnas a la derecha del video y filas hacia arriba), cada hueco separado el ANCHO y el ALTO reales de la imagen + 300 u, asi que ninguna parte pisa a otra ni comparte celda de 100x100 u. En la prueba (240 partes) x maxima 41.000 (antes ~250.000) e y maxima 11.400.
+- Los **Move** de entrada y salida de cada parte llevan ahora tambien el desplazamiento en Y (en Toggle/Spawn por grupo de frames; en Remap por parte): la imagen, el timing y el anti-lag no cambian (mismos PSNR, deriva 0).
+- Ajuste nuevo **Anti-kick: altura de la cuadricula (bloques)**, 600 por defecto (18.000 u por encima del video): si no caben mas filas, la cuadricula se ensancha en X.
+- La calidad no se toca: solo cambia DONDE esperan las partes antes de entrar.
+
 # v1.0.6-beta
 - **Anti-kick mas robusto**: las partes lejanas se separan SIEMPRE al menos el ancho real de la imagen + 300 u (antes, con muchas partes, el paso entre ellas podia quedar menor que la imagen por el tope de *distancia maxima* y las partes se pisaban en las mismas celdas). Con el check activo ese tope se puede superar (hasta x = 1.5 millones).
 - Si el anti-kick **no consigue** bajar de 3400 objetos por celda, ahora sale un aviso en ROJO de 12 s antes de colocar (antes solo iba dentro del mensaje final).

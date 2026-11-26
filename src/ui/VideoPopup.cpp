@@ -979,6 +979,7 @@ void VideoPopup::finishBuild(std::shared_ptr<BuildJob> job) {
     if (job->chan) p.palette = job->palette;       // vacia = HSV
     p.lag = job->lagParams;
     p.antiKick = mod->getSettingValue<bool>("anti-kick");
+    p.kickMaxY = std::clamp(double(mod->getSettingValue<int>("anti-kick-height")) * 30.0, 3000.0, 150000.0);
     const CCPoint origin = placementOrigin();
     p.eo.originX = origin.x;
     p.eo.originY = origin.y;

@@ -42,6 +42,7 @@ int main() {
         p.antiKick = true;  LagInfo l1; const std::string c1 = buildVideoString(res, plan, p, &err, &l1);
         if (c0.empty() || c1.empty()) { printf("FAIL build %s\n", err.c_str()); return 1; }
         const long m0 = maxCellOf(c0), m1 = maxCellOf(c1);
+        std::vector<float> yx, yy; vdetail::parseXY(c1, yx, yy); float ymaxv = 0, xmaxv = 0; for (float v : yy) ymaxv = std::max(ymaxv, v); for (float v : yx) xmaxv = std::max(xmaxv, v);
         // simulador: cada frame visible en su instante con anti-kick
         auto objs = sim::parse(c1); sim::Sim Sm; Sm.init(c1); sim::Opt so; std::mt19937 rng(1);
         int wrong = 0;
@@ -52,8 +53,8 @@ int main() {
         }
         const bool okMax = (m1 <= p.kickSafeCell + 12) && l1.kickOk && std::labs(m1 - l1.kickMaxCell) <= 40;   // la estimacion interna coincide con la medida
         const bool improved = m1 <= m0;
-        printf("%-6s anti-lag pedido=%d farMax=%.0f: sin anti-kick celda max=%ld | con anti-kick=%ld (estimada %ld, limite GD %d, exigido %d, partes de %d obj, %d partes) %s | frames mal: %d\n",
-               mode == 2 ? "Remap" : mode ? "Spawn" : "Toggle", lagReq, fm, m0, m1, l1.kickMaxCell, l1.kickLimit, l1.kickSafe, l1.kickChunkObjects, l1.chunks,
+        printf("%-6s anti-lag pedido=%d farMax=%.0f: sin anti-kick celda max=%ld | con anti-kick=%ld (estimada %ld, limite GD %d, exigido %d, partes de %d obj, %d partes; x max %.0f, y max %.0f) %s | frames mal: %d\n",
+               mode == 2 ? "Remap" : mode ? "Spawn" : "Toggle", lagReq, fm, m0, m1, l1.kickMaxCell, l1.kickLimit, l1.kickSafe, l1.kickChunkObjects, l1.chunks, xmaxv, ymaxv,
                okMax && improved ? "OK" : "FALLO", wrong);
         if (!okMax || !improved || wrong) ++bad;
         if (m0 <= p.kickSafeCell) { printf("   (aviso: el caso de prueba no supera el limite sin anti-kick; sube N)\n"); }

@@ -75,6 +75,9 @@ struct LagParams {
     bool spread = false;
     double farStep = 30000.0;
     double farMax = 300000.0;
+    bool grid2D = false;              // anti-kick: las partes esperan en una CUADRICULA en X e Y (no solo en una fila a la derecha)
+    double farStepMinY = 0.0;         // separacion minima en Y entre filas de la cuadricula (alto de la imagen + margen)
+    double farMaxY = 20000.0;         // altura maxima (u) de la cuadricula: si no cabe en filas, se ensancha en X
     double farStepMin = 0.0;          // separacion MINIMA entre partes con spread (anti-kick: ancho de la imagen + margen), aunque pase de farMax
     int objectIdMove = 901;
 };
@@ -110,6 +113,7 @@ struct VideoExportParams {
     // ANTI-KICK (test): simula las celdas de 100x100 u que mira GD al cargar (limite 8000 objetos por celda, 4000 si el nivel es muy
     // vacio). Fuerza las partes anti-lag con cada parte a distinta distancia y reduce los objetos por parte hasta que ninguna celda pase de kickSafeCell.
     bool antiKick = false;
+    double kickMaxY = 20000.0;        // altura maxima (u) de la cuadricula de espera de las partes (por encima del origen)
     int kickSafeCell = 3400;          // objetos por celda exigidos (el limite de GD es 4000 u 8000: margen del 15 %)
     // Correccion de velocidad: todos los tiempos (retardos de los Spawn, duracion de la vuelta) se multiplican por esto. 1 = exacto.
     // Si en tu GD la animacion dura MENOS que el video, sube el valor (p. ej. 1.05); si dura mas, bajalo.
@@ -204,15 +208,15 @@ inline void parseXY(const std::string& s, std::vector<float>& xs, std::vector<fl
     }
 }
 struct CellStats { long maxCell = 0; double ratio = 0; int limit = 8000; };
-// `farX[g]` = desplazamiento X inicial del grupo g (0 si empieza cerca). Cuenta tambien `extra` objetos fijos por celda (triggers de la rejilla).
+// `farX[g]` / `farY[g]` = desplazamiento inicial (X, Y) del grupo g (0 si empieza cerca). Cuenta tambien `extra` objetos fijos por celda (triggers de la rejilla).
 inline CellStats cellStats(const std::vector<std::vector<float>>& xs, const std::vector<std::vector<float>>& ys, const std::vector<int>& used,
-                           const std::vector<double>& farX, long extra) {
+                           const std::vector<double>& farX, const std::vector<double>& farY, long extra) {
     std::unordered_map<unsigned long long, int> cnt;
     for (int g : used) {
         const auto& X = xs[size_t(g)]; const auto& Y = ys[size_t(g)];
-        const double f = farX[size_t(g)];
+        const double f = farX[size_t(g)], fy = farY[size_t(g)];
         for (size_t i = 0; i < X.size(); ++i)
-            ++cnt[(static_cast<unsigned long long>(secIdx(double(X[i]) + f)) << 32) | static_cast<unsigned int>(secIdx(double(Y[i])))];
+            ++cnt[(static_cast<unsigned long long>(secIdx(double(X[i]) + f)) << 32) | static_cast<unsigned int>(secIdx(double(Y[i]) + fy))];
     }
     CellStats st;
     std::unordered_map<int, std::pair<int, int>> col;                       // columna -> (cy maximo, celdas ocupadas)
@@ -235,7 +239,8 @@ struct ChunkPlan {
     std::vector<std::vector<int>> groups;     // por parte: indices de grupo de resultado (los de S.used)
     std::vector<int> inStep, outStep;         // evento (paso F_e) donde va el Move de entrada / salida de cada parte
     std::vector<char> startsNear;             // la parte empieza en el origen: su intervalo "cerca" cruza el inicio de la vuelta (entrada al final de la anterior o salida en la siguiente)
-    std::vector<double> farOf;                // distancia de espera de CADA parte (todas iguales salvo con spread)
+    std::vector<double> farOf;                // distancia de espera (en X) de CADA parte (todas iguales salvo con spread)
+    std::vector<double> farOfY;               // desplazamiento en Y de cada parte (0 salvo con cuadricula 2D de anti-kick)
     double farDist = 0;                       // la mayor
 };
 
@@ -295,7 +300,21 @@ inline ChunkPlan planChunks(const VideoSchedule& S, const std::vector<size_t>& o
             if (base + double(K - 1) * stepU > 1500000.0) stepU = std::max(0.0, (1500000.0 - base) / double(K - 1));
         }
     }
-    for (size_t k = 0; k < K; ++k) cp.farOf.push_back(base + double(k) * stepU);
+    if (lp.grid2D && K > 1) {
+        // cuadricula: columnas a la derecha (desde `base`) y filas hacia arriba; ninguna celda de espera se comparte ni se pisa con otra parte
+        const double sx = std::max(1.0, lp.farStepMin), sy = std::max(1.0, lp.farStepMinY);
+        const long maxRows = std::max(1L, long(std::floor(lp.farMaxY / sy)));
+        long cols = std::max(1L, long(std::ceil(std::sqrt(double(K) * sy / sx))));
+        cols = std::max(cols, (long(K) + maxRows - 1) / maxRows);
+        for (size_t k = 0; k < K; ++k) {
+            cp.farOf.push_back(base + double(long(k) % cols) * sx);
+            cp.farOfY.push_back(double(long(k) / cols) * sy);
+        }
+        cp.farDist = *std::max_element(cp.farOf.begin(), cp.farOf.end());
+        cp.active = true;
+        return cp;
+    }
+    for (size_t k = 0; k < K; ++k) { cp.farOf.push_back(base + double(k) * stepU); cp.farOfY.push_back(0.0); }
     cp.farDist = cp.farOf.back() > cp.farOf.front() ? cp.farOf.back() : cp.farOf.front();
     cp.active = true;
     return cp;
@@ -418,8 +437,9 @@ inline std::string buildVideoString(const std::vector<Result>& results, const Vi
     if (p.antiKick) { lag.enable = true; lag.spread = true; }              // anti-kick: las partes lejanas no se apilan en un mismo sitio
     LagInfo li; li.requested = lag.enable; li.kickOn = p.antiKick;
     std::vector<char> farGroup(size_t(U), 0);
-    std::vector<double> farOfGroup(size_t(U), 0.0);                          // distancia de espera de cada grupo (la de su parte)
-    std::vector<std::vector<std::pair<int, double>>> movesAt(E);            // paso -> (grupo, dx)
+    std::vector<double> farOfGroup(size_t(U), 0.0), farOfGroupY(size_t(U), 0.0);   // desplazamiento de espera de cada grupo (el de su parte)
+    struct MoveAt { int g; double dx, dy; };
+    std::vector<std::vector<MoveAt>> movesAt(E);                            // paso -> (grupo, dx, dy)
     std::vector<char> stepHasMove(E, 0);
     std::vector<int> chunkOfGroup(size_t(U), -1);                           // Remap: parte (0..K-1) de cada grupo de frames
     std::vector<int> Cg, MVin, MVout;                                       // Remap: grupo de cada parte y grupos de sus Move de entrada / salida
@@ -431,23 +451,27 @@ inline std::string buildVideoString(const std::vector<Result>& results, const Vi
         if (p.antiKick) {
             // posiciones iniciales de cada grupo (exportado una vez en el origen) -> ancho real ocupado, para separar las partes sin que se pisen
             xs.resize(size_t(U)); ys.resize(size_t(U));
-            double mnx = 1e18, mxx = -1e18;
+            double mnx = 1e18, mxx = -1e18, mny = 1e18, mxy = -1e18;
             for (int g : S.used) {
                 GdExportOptions e0 = p.eo; e0.groupStr = "1"; e0.monoFastPath = false;
                 vdetail::parseXY(toGdString(results[size_t(g)], e0), xs[size_t(g)], ys[size_t(g)]);
                 for (float x : xs[size_t(g)]) { mnx = std::min(mnx, double(x)); mxx = std::max(mxx, double(x)); }
+                for (float y : ys[size_t(g)]) { mny = std::min(mny, double(y)); mxy = std::max(mxy, double(y)); }
             }
             lag.farStepMin = (mxx > mnx ? mxx - mnx : 0.0) + 300.0;
+            lag.farStepMinY = (mxy > mny ? mxy - mny : 0.0) + 300.0;
+            lag.farMaxY = p.kickMaxY;
+            lag.grid2D = true;                                              // las partes esperan en una cuadricula X e Y
         }
         cp = vdetail::planChunks(S, objs, plan.fps, lag, sz0.w);
         if (p.antiKick) {
             const long extra = 12;                                           // triggers de la rejilla: como mucho ~11 por celda
-            auto farFor = [&](const vdetail::ChunkPlan& c) {
+            auto farFor = [&](const vdetail::ChunkPlan& c, bool yAxis) {
                 std::vector<double> f(size_t(U), 0.0);
-                if (c.active) for (size_t k = 0; k < c.groups.size(); ++k) if (!c.startsNear[k]) for (int g : c.groups[k]) f[size_t(g)] = c.farOf[k];
+                if (c.active) for (size_t k = 0; k < c.groups.size(); ++k) if (!c.startsNear[k]) for (int g : c.groups[k]) f[size_t(g)] = yAxis ? c.farOfY[k] : c.farOf[k];
                 return f;
             };
-            vdetail::CellStats st = vdetail::cellStats(xs, ys, S.used, farFor(cp), extra);
+            vdetail::CellStats st = vdetail::cellStats(xs, ys, S.used, farFor(cp, false), farFor(cp, true), extra);
             int chunk = lag.chunkObjects;
             const long groupsFixed = long(next) + (remap ? 0 : 0);
             for (int it = 0; it < 10 && st.maxCell > p.kickSafeCell && cp.active && chunk > 1000; ++it) {
@@ -457,7 +481,7 @@ inline std::string buildVideoString(const std::vector<Result>& results, const Vi
                 if (!c2.active) break;
                 if (remap && groupsFixed + 3L * long(c2.groups.size()) > 9990) break;            // no quedan grupos para tantas partes
                 chunk = nc; cp = std::move(c2); lag = l2;
-                st = vdetail::cellStats(xs, ys, S.used, farFor(cp), extra);
+                st = vdetail::cellStats(xs, ys, S.used, farFor(cp, false), farFor(cp, true), extra);
             }
             li.kickMaxCell = st.maxCell; li.kickLimit = st.limit; li.kickEmptyRatio = st.ratio; li.kickSafe = p.kickSafeCell;
             li.kickChunkObjects = cp.active ? chunk : 0;
@@ -469,10 +493,10 @@ inline std::string buildVideoString(const std::vector<Result>& results, const Vi
         if (cp.active) {
             for (size_t k = 0; k < cp.groups.size(); ++k) {
                 for (int g : cp.groups[k]) {
-                    if (!cp.startsNear[k]) { farGroup[size_t(g)] = 1; farOfGroup[size_t(g)] = cp.farOf[k]; }
+                    if (!cp.startsNear[k]) { farGroup[size_t(g)] = 1; farOfGroup[size_t(g)] = cp.farOf[k]; farOfGroupY[size_t(g)] = cp.farOfY[k]; }
                     if (remap) { chunkOfGroup[size_t(g)] = int(k); continue; }             // Remap: un Move por PARTE (grupo propio C_k), no por grupo de frames
-                    movesAt[size_t(cp.inStep[k])].push_back({g, -cp.farOf[k]});
-                    movesAt[size_t(cp.outStep[k])].push_back({g, +cp.farOf[k]});
+                    movesAt[size_t(cp.inStep[k])].push_back({g, -cp.farOf[k], -cp.farOfY[k]});
+                    movesAt[size_t(cp.outStep[k])].push_back({g, +cp.farOf[k], +cp.farOfY[k]});
                     li.moveTriggers += 2;
                 }
             }
@@ -487,7 +511,7 @@ inline std::string buildVideoString(const std::vector<Result>& results, const Vi
     if (p.antiKick && !cp.active && li.kickMaxCell == 0 && !S.still) {      // sin partes: se simula igual para avisar (todo apilado en el origen)
         std::vector<std::vector<float>> xs, ys; xs.resize(size_t(U)); ys.resize(size_t(U)); std::vector<double> f(size_t(U), 0.0);
         for (int g : S.used) { GdExportOptions e0 = p.eo; e0.groupStr = "1"; e0.monoFastPath = false; vdetail::parseXY(toGdString(results[size_t(g)], e0), xs[size_t(g)], ys[size_t(g)]); }
-        const vdetail::CellStats st = vdetail::cellStats(xs, ys, S.used, f, 12);
+        const vdetail::CellStats st = vdetail::cellStats(xs, ys, S.used, f, f, 12);
         li.kickMaxCell = st.maxCell; li.kickLimit = st.limit; li.kickEmptyRatio = st.ratio; li.kickSafe = p.kickSafeCell; li.kickOk = st.maxCell <= p.kickSafeCell;
         if (!li.kickOk && li.kickNote.empty()) li.kickNote = "sin partes anti-lag no hay forma de repartir los frames";
     }
@@ -505,7 +529,7 @@ inline std::string buildVideoString(const std::vector<Result>& results, const Vi
         GdExportOptions eo = p.eo;
         eo.groupStr = std::to_string(G[size_t(g)]);
         if (remap && chunkOfGroup[size_t(g)] >= 0) { eo.groupStr += '.'; eo.groupStr += std::to_string(Cg[size_t(chunkOfGroup[size_t(g)])]); }   // grupo de la parte (un Move la mueve entera)
-        if (farGroup[size_t(g)]) eo.originX = p.eo.originX + farOfGroup[size_t(g)];      // espera lejos hasta que su Move la traiga
+        if (farGroup[size_t(g)]) { eo.originX = p.eo.originX + farOfGroup[size_t(g)]; eo.originY = p.eo.originY + farOfGroupY[size_t(g)]; }      // espera lejos hasta que su Move la traiga
         eo.zBase = zb[size_t(g)];
         eo.monoFastPath = false;
         if (!p.palette.empty()) {                                  // canal de cada color de ESTE grupo = canal global de la paleta
@@ -545,8 +569,8 @@ inline std::string buildVideoString(const std::vector<Result>& results, const Vi
         for (size_t k = 0; k < Cg.size(); ++k) {
             at(x, y); vdetail::spawn(out, p, x, y, MVin[k], S.ev[size_t(cp.inStep[k])].t, M);
             at(x, y); vdetail::spawn(out, p, x, y, MVout[k], S.ev[size_t(cp.outStep[k])].t, M);
-            at(x, y); vdetail::move(out, p, x, y, Cg[k], -cp.farOf[k], 0.0, MVin[k]);
-            at(x, y); vdetail::move(out, p, x, y, Cg[k], +cp.farOf[k], 0.0, MVout[k]);
+            at(x, y); vdetail::move(out, p, x, y, Cg[k], -cp.farOf[k], -cp.farOfY[k], MVin[k]);
+            at(x, y); vdetail::move(out, p, x, y, Cg[k], +cp.farOf[k], +cp.farOfY[k], MVout[k]);
         }
         at(x, y); vdetail::spawn(out, p, x, y, M, S.total, M);                                                     // la vuelta se relanza sola
         // plantilla T: mostrar pin0 y ocultar pin1..3
@@ -584,7 +608,7 @@ inline std::string buildVideoString(const std::vector<Result>& results, const Vi
             for (size_t e = 0; e < E; ++e) {
                 at(x, y); vdetail::toggle(out, p, x, y, G[size_t(S.ev[e].group)], 1, F[e]);                            // primero MOSTRAR el nuevo
                 for (int h : vdetail::hideSet(S.ev, e)) { at(x, y); vdetail::toggle(out, p, x, y, G[size_t(h)], 0, F[e]); }
-                for (auto& mv : movesAt[e]) { at(x, y); vdetail::move(out, p, x, y, G[size_t(mv.first)], mv.second, 0.0, F[e]); }     // anti-lag: parte que entra / sale
+                for (auto& mv : movesAt[e]) { at(x, y); vdetail::move(out, p, x, y, G[size_t(mv.g)], mv.dx, mv.dy, F[e]); }     // anti-lag: parte que entra / sale
                 if (p.mode == PlayMode::Spawn && e + 1 < E) {
                     const long b0 = long(std::floor(S.ev[e].t / bs + 1e-9)), b1 = long(std::floor(S.ev[e + 1].t / bs + 1e-9));
                     if (b0 == b1) { at(x, y); vdetail::spawn(out, p, x, y, F[e + 1], S.ev[e + 1].t - S.ev[e].t, F[e]); }  // encadenar con el paso siguiente
